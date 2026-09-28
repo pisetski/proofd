@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.proofd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Edit this path to your install location (commonly ~/.cargo/bin/proofd). -->
+    <string>/Users/YOU/.cargo/bin/proofd</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/proofd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/proofd.err.log</string>
+</dict>
+</plist>

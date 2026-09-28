@@ -1,0 +1,29 @@
+# proofd configuration example.
+# Copy to ~/.config/proofd/config.toml and edit.
+# Lookup order: $XDG_CONFIG_HOME/proofd/config.toml, ~/.config/proofd/config.toml,
+# then the platform-native dir (~/Library/Application Support/proofd/config.toml on macOS).
+# Missing file means built-in defaults; invalid file prevents daemon start.
+
+# Provider backend: "claude" | "opencode" | "openai-compat"
+# - claude: shells out to `claude -p --model <model> --output-format text`, prompt via stdin.
+# - opencode: shells out to `opencode run --model <model> --format default` (verify with `opencode --help`; flags drift).
+# - openai-compat: POSTs to {base_url}/chat/completions with OpenAI-compatible schema.
+provider = "claude"
+
+# Model passed to the provider CLI or API.
+# Conservative default; e.g. Claude Haiku-class for fast, cheap polishing.
+model = "haiku"
+
+# Only used by openai-compat. Base URL without trailing path, e.g. "http://localhost:11434/v1".
+# base_url = "http://localhost:11434/v1"
+
+# Provider call timeout in seconds. Caller enforces via tokio::time::timeout.
+timeout_secs = 15
+
+# Global hotkey. MVP supports Ctrl-Alt-P-style combos mapping to CONTROL | ALT + KeyP.
+# Examples: "Ctrl-Alt-P", "Ctrl-Option-P".
+hotkey = "Ctrl-Alt-P"
+
+# Safety cap: abort paste if copied text exceeds this many chars.
+# Protects against Cmd+A fallback selecting more than intended.
+max_input_chars = 12000
