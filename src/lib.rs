@@ -1,5 +1,7 @@
 pub mod config;
 pub mod daemon;
+#[cfg(target_os = "macos")]
+pub mod hotkey;
 pub mod notify;
 pub mod platform;
 #[cfg(target_os = "macos")]

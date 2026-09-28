@@ -18,36 +18,58 @@ const AFTER_PASTE_DELAY: Duration = Duration::from_millis(300);
 const BETWEEN_KEYS_DELAY: Duration = Duration::from_millis(40);
 
 pub struct MacosPlatform {
-    enigo: Mutex<enigo::Enigo>,
+    /// Lazily initialized on first key simulation, and retried on every use
+    /// while missing: granting Accessibility later heals the daemon without
+    /// a restart, and a missing grant fails per-press (notify + log) instead
+    /// of crash-looping the whole daemon at startup.
+    enigo: Mutex<Option<enigo::Enigo>>,
+}
+
+impl Default for MacosPlatform {
+    fn default() -> Self {
+        Self {
+            enigo: Mutex::new(None),
+        }
+    }
 }
 
 impl MacosPlatform {
-    pub fn new() -> Result<Self, PlatformError> {
-        let enigo = enigo::Enigo::new(&enigo::Settings::default())
-            .map_err(|e| PlatformError::KeySim(format!("enigo init: {e}")))?;
-        Ok(Self {
-            enigo: Mutex::new(enigo),
-        })
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    fn cmd_click(&self, ch: char) -> Result<(), PlatformError> {
-        use enigo::{Direction, Key, Keyboard};
+    fn with_enigo<T>(
+        &self,
+        f: impl FnOnce(&mut enigo::Enigo) -> Result<T, PlatformError>,
+    ) -> Result<T, PlatformError> {
         let mut guard = self
             .enigo
             .lock()
             .map_err(|e| PlatformError::KeySim(format!("enigo lock: {e}")))?;
-        guard
-            .key(Key::Meta, Direction::Press)
-            .map_err(|e| PlatformError::KeySim(format!("cmd press: {e}")))?;
-        std::thread::sleep(BETWEEN_KEYS_DELAY);
-        guard
-            .key(Key::Unicode(ch), Direction::Click)
-            .map_err(|e| PlatformError::KeySim(format!("cmd+{ch}: {e}")))?;
-        std::thread::sleep(BETWEEN_KEYS_DELAY);
-        guard
-            .key(Key::Meta, Direction::Release)
-            .map_err(|e| PlatformError::KeySim(format!("cmd release: {e}")))?;
-        Ok(())
+        if guard.is_none() {
+            let created = enigo::Enigo::new(&enigo::Settings::default())
+                .map_err(|e| PlatformError::KeySim(format!("enigo init: {e}")))?;
+            *guard = Some(created);
+        }
+        f(guard.as_mut().expect("enigo just initialized"))
+    }
+
+    fn cmd_click(&self, ch: char) -> Result<(), PlatformError> {
+        use enigo::{Direction, Key, Keyboard};
+        self.with_enigo(|enigo| {
+            enigo
+                .key(Key::Meta, Direction::Press)
+                .map_err(|e| PlatformError::KeySim(format!("cmd press: {e}")))?;
+            std::thread::sleep(BETWEEN_KEYS_DELAY);
+            enigo
+                .key(Key::Unicode(ch), Direction::Click)
+                .map_err(|e| PlatformError::KeySim(format!("cmd+{ch}: {e}")))?;
+            std::thread::sleep(BETWEEN_KEYS_DELAY);
+            enigo
+                .key(Key::Meta, Direction::Release)
+                .map_err(|e| PlatformError::KeySim(format!("cmd release: {e}")))?;
+            Ok(())
+        })
     }
 
     fn clipboard_get_text() -> Option<String> {

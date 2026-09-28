@@ -1,9 +1,8 @@
 use proofd_lib::config;
 use tracing::info;
 
-// `current_thread` keeps `run_macos` on the main thread, which the macOS
-// Carbon hotkey backend requires: the main CFRunLoop must spin for events
-// to dispatch.
+// `current_thread` keeps `run_macos` on the main thread, which the event-tap
+// backend requires: the main CFRunLoop must spin for tap events to dispatch.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
@@ -30,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use proofd_lib::platform_macos::MacosPlatform;
         use proofd_lib::providers::from_config;
 
-        let platform = MacosPlatform::new().map_err(|e| format!("platform init: {e}"))?;
+        let platform = MacosPlatform::new();
         let provider = from_config(&cfg);
         let daemon = Daemon::new(cfg.clone(), platform, provider);
         run_macos(daemon, &cfg.hotkey).await.map_err(|e| {

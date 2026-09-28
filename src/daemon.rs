@@ -186,56 +186,87 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
     }
 }
 
-/// MVP hotkey string parser: accepts `Ctrl-Alt-P` / `Ctrl+Alt+P` /
-/// `Ctrl-Option-P` styles and delegates to `global-hotkey` parsing.
-/// Default maps to CONTROL | ALT + KeyP.
-#[cfg(target_os = "macos")]
-pub fn parse_hotkey(s: &str) -> Result<global_hotkey::hotkey::HotKey, String> {
-    let normalized = s.replace('-', "+");
-    normalized
-        .parse()
-        .map_err(|e| format!("invalid hotkey {s:?}: {e}"))
-}
-
-#[cfg(target_os = "macos")]
-pub fn default_hotkey() -> global_hotkey::hotkey::HotKey {
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-    HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP)
-}
-
-/// macOS event loop: register hotkey, best-effort tray, pump main runloop.
+/// macOS event loop: passive key-down listener + polish dispatcher.
 ///
-/// `global-hotkey` on macOS uses Carbon `RegisterEventHotKey` targeted at the
-/// application event target. The handler only fires while the main
-/// `CFRunLoop` spins, so each iteration blocks briefly in
-/// `CFRunLoopRunInMode` to let the OS dispatch. This MUST run on the main
-/// thread (see `main.rs`: `current_thread` runtime); pumping a worker
-/// thread's runloop would never receive the hotkey.
+/// Observation is a `ListenOnly` session event tap: the daemon never
+/// swallows, modifies, or synthesizes the hotkey event itself, it only wakes
+/// up when the combo is pressed. The tap is a Mach-port runloop source, so
+/// each iteration spins the main `CFRunLoop` (common modes) to service it.
+/// This MUST run on the main thread (see `main.rs`: `current_thread`
+/// runtime); a worker thread's runloop would never see tap events.
+///
+/// Replaces the earlier Carbon `RegisterEventHotKey` backend, whose
+/// application-target handler never fired for this faceless daemon (the
+/// Carbon event queue is not serviced by pumping `CFRunLoop` alone).
+/// Needs Input Monitoring consent for the proofd binary; creation fails
+/// fast with an actionable error when it is missing.
 #[cfg(target_os = "macos")]
 pub async fn run_macos<P, R>(daemon: Daemon<P, R>, hotkey_str: &str) -> Result<(), String>
 where
     P: Platform + 'static,
     R: Provider + 'static,
 {
-    use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+    use crate::hotkey::{default_combo, parse_combo};
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_graphics::event::{
+        CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+        CallbackResult, EventField,
+    };
 
-    let manager = GlobalHotKeyManager::new().map_err(|e| format!("hotkey manager: {e}"))?;
-    let hotkey = parse_hotkey(hotkey_str).unwrap_or_else(|e| {
+    let combo = parse_combo(hotkey_str).unwrap_or_else(|e| {
         tracing::warn!("{e}; falling back to Ctrl-Alt-P");
-        default_hotkey()
+        default_combo()
     });
-    manager
-        .register(hotkey)
-        .map_err(|e| format!("register hotkey {hotkey}: {e}"))?;
-    tracing::info!("hotkey registered: {hotkey}");
+
+    // Bounded channel: callback must never block (it runs inside the event
+    // stream), so a full buffer just drops. Single-flight `busy` guard makes
+    // drops harmless.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(16);
+    let combo_in_tap = combo.clone();
+    let tap = CGEventTap::new(
+        CGEventTapLocation::Session,
+        CGEventTapPlacement::HeadInsertEventTap,
+        CGEventTapOptions::ListenOnly,
+        vec![CGEventType::KeyDown],
+        move |_proxy, etype, event| {
+            match etype {
+                CGEventType::KeyDown => {
+                    let autorepeat =
+                        event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT);
+                    let keycode =
+                        event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+                    if autorepeat == 0 && combo_in_tap.matches(event.get_flags(), keycode) {
+                        let _ = tx.try_send(());
+                    }
+                }
+                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
+                    tracing::warn!("event tap disabled by system ({etype:?}); restart agent");
+                }
+                _ => {}
+            }
+            CallbackResult::Keep
+        },
+    )
+    .map_err(|()| {
+        "event tap creation failed (NULL). Grant Input Monitoring to the proofd binary \
+         (Settings > Privacy & Security > Input Monitoring), then restart the agent."
+            .to_string()
+    })?;
+
+    let source = tap
+        .mach_port()
+        .create_runloop_source(0)
+        .map_err(|_| "event tap runloop source creation failed".to_string())?;
+    CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
+    tap.enable();
+    // NB: `tap` and `source` must stay alive for the whole loop below; the
+    // tap disables itself when dropped.
+    tracing::info!("hotkey armed (listen-only tap): {combo}");
 
     // Tray indicator deferred: tray-icon needs main-thread event-loop
     // integration on macOS that would complicate the MVP. Hotkey has
     // priority; busy state is exposed via logging. See plan section 10-11.
     tracing::info!("tray deferred; using logging only");
-    let _ = &daemon;
-
-    let receiver = GlobalHotKeyEvent::receiver();
 
     // Ctrl-C sets a flag via a spawned task so the main-thread pump loop can
     // exit cleanly (the pump itself is a blocking 50ms wait, not awaitable).
@@ -247,20 +278,23 @@ where
     });
 
     loop {
-        // Pump the MAIN runloop so Carbon dispatches the hotkey handler,
-        // which in turn sends on `receiver`. Must stay on the main thread.
+        // Spin the MAIN runloop so the tap's Mach source dispatches into the
+        // callback above. Must stay on the main thread.
         pump_runloop_once(Duration::from_millis(50));
         if shutdown.load(Ordering::SeqCst) {
             tracing::info!("shutdown");
             return Ok(());
         }
-        while let Ok(event) = receiver.try_recv() {
-            if event.id == hotkey.id() && event.state == HotKeyState::Pressed {
+        let mut pressed = false;
+        while rx.try_recv().is_ok() {
+            pressed = true;
+        }
+        if pressed {
+            tracing::info!("hotkey pressed; running polish");
+            if daemon.is_busy() {
+                tracing::debug!("hotkey ignored while busy");
+            } else {
                 let d = daemon.clone();
-                if d.is_busy() {
-                    tracing::debug!("hotkey ignored while busy");
-                    continue;
-                }
                 tokio::spawn(async move {
                     d.handle_and_notify().await;
                 });
@@ -273,7 +307,11 @@ where
 }
 
 /// Block the current (must be main) thread briefly in the main runloop so
-/// Carbon `EventHotKey` callbacks fire.
+/// the event-tap Mach source dispatches. Runs the concrete default mode:
+/// `kCFRunLoopCommonModes` is a *set* for adding sources, not a runnable
+/// mode — passing it to `RunInMode` errors out and dispatches nothing.
+/// (Sources added under common modes are still serviced while running the
+/// default mode, since default belongs to the common set.)
 #[cfg(target_os = "macos")]
 fn pump_runloop_once(timeout: Duration) {
     use core_foundation::runloop::{kCFRunLoopDefaultMode, CFRunLoop};
