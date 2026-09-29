@@ -64,9 +64,11 @@ pub fn from_config(cfg: &Config) -> ProviderImpl {
     match cfg.provider {
         crate::config::ProviderKind::Claude => ProviderImpl::Claude(ClaudeCli {
             model: cfg.model.clone(),
+            bin: cfg.provider_bin.clone(),
         }),
         crate::config::ProviderKind::Opencode => ProviderImpl::Opencode(OpencodeCli {
             model: cfg.model.clone(),
+            bin: cfg.provider_bin.clone(),
         }),
         crate::config::ProviderKind::OpenAICompat => ProviderImpl::OpenAI(OpenAICompat {
             model: cfg.model.clone(),
@@ -96,6 +98,105 @@ impl Provider for ProviderImpl {
     }
 }
 
+/// Resolve a provider CLI binary.
+///
+/// LaunchAgents run with a minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`),
+/// so a bare `Command::new("opencode")` fails with ENOENT even when the
+/// binary works fine in your terminal (e.g. `/opt/homebrew/bin/opencode`).
+///
+/// Order: explicit `provider_bin` override (may be absolute or `~/`-prefixed)
+/// first, then each `PATH` entry, then common macOS locations.
+pub fn resolve_cli(explicit: Option<&str>, name: &str) -> Result<String, ProviderError> {
+    if let Some(raw) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        let expanded = expand_tilde(raw);
+        // Absolute/relative path containing a slash: use directly if it exists.
+        if expanded.contains('/') {
+            if std::path::Path::new(&expanded).is_file() {
+                return Ok(expanded);
+            }
+            return Err(ProviderError::Transport(format!(
+                "provider_bin {expanded:?} not found; check `provider_bin` in config"
+            )));
+        }
+        // Bare name override: still try PATH first.
+        if let Some(found) = find_on_path(&expanded) {
+            return Ok(found);
+        }
+        return Err(ProviderError::Transport(format!(
+            "provider_bin {expanded:?} not found on PATH ({})",
+            path_for_error()
+        )));
+    }
+    if let Some(found) = find_on_path(name) {
+        return Ok(found);
+    }
+    for dir in fallback_dirs() {
+        let cand = std::path::Path::new(&dir).join(name);
+        if cand.is_file() {
+            return Ok(cand.display().to_string());
+        }
+    }
+    Err(ProviderError::Transport(format!(
+        "spawn {name}: not found on PATH ({}) nor in {} — \
+         set `provider_bin` in config (e.g. `provider_bin = \"/opt/homebrew/bin/{name}\"`) \
+         or add an EnvironmentVariables PATH to your LaunchAgent plist",
+        path_for_error(),
+        fallback_dirs().join(", "),
+    )))
+}
+
+fn expand_tilde(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest).display().to_string();
+        }
+    }
+    s.to_string()
+}
+
+fn find_on_path(name: &str) -> Option<String> {
+    // Absolute path shortcut.
+    if name.contains('/') {
+        let expanded = expand_tilde(name);
+        let p = std::path::Path::new(&expanded);
+        if p.is_file() {
+            return Some(p.display().to_string());
+        }
+        return None;
+    }
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let cand = dir.join(name);
+        if cand.is_file() {
+            return Some(cand.display().to_string());
+        }
+    }
+    None
+}
+
+fn fallback_dirs() -> Vec<String> {
+    let mut dirs = vec![
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/opt/local/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        for sub in [".cargo/bin", ".local/bin", ".opencode/bin", ".bun/bin"] {
+            dirs.push(home.join(sub).display().to_string());
+        }
+    }
+    dirs
+}
+
+fn path_for_error() -> String {
+    std::env::var("PATH").unwrap_or_else(|_| "<unset>".to_string())
+}
+
 /// Claude CLI provider.
 /// Spawns `claude -p --model <model> --output-format text`, prompt via stdin.
 /// Do not invent flags: before adding --no-session-persistence/--tools etc.,
@@ -103,6 +204,9 @@ impl Provider for ProviderImpl {
 #[derive(Debug, Clone)]
 pub struct ClaudeCli {
     pub model: String,
+    /// Optional explicit binary path (from `provider_bin`). `None` means
+    /// PATH lookup plus common macOS locations.
+    pub bin: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -110,13 +214,14 @@ impl Provider for ClaudeCli {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
         use tokio::io::AsyncWriteExt;
         let full_prompt = format!("{system}\n\n{user}");
-        let mut child = tokio::process::Command::new("claude")
+        let bin = resolve_cli(self.bin.as_deref(), "claude")?;
+        let mut child = tokio::process::Command::new(&bin)
             .args(["-p", "--model", &self.model, "--output-format", "text"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| ProviderError::Transport(format!("spawn claude: {e}")))?;
+            .map_err(|e| ProviderError::Transport(format!("spawn claude ({bin}): {e}")))?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(full_prompt.as_bytes())
@@ -141,11 +246,15 @@ impl Provider for ClaudeCli {
 }
 
 /// Opencode CLI provider.
-/// Candidate syntax: `opencode run --model <model> --format default`.
-/// VERIFY with `opencode --help` before relying on optional flags; CLI drifts.
+/// Syntax: `opencode run --model <provider/model> --format default`,
+/// prompt via stdin. NOTE: `--model` needs the `provider/model` form
+/// (e.g. `opencode/mimo-v2.6-flash-free`); a bare model name fails server-side.
 #[derive(Debug, Clone)]
 pub struct OpencodeCli {
     pub model: String,
+    /// Optional explicit binary path (from `provider_bin`). `None` means
+    /// PATH lookup plus common macOS locations.
+    pub bin: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -153,13 +262,14 @@ impl Provider for OpencodeCli {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
         use tokio::io::AsyncWriteExt;
         let full_prompt = format!("{system}\n\n{user}");
-        let mut child = tokio::process::Command::new("opencode")
+        let bin = resolve_cli(self.bin.as_deref(), "opencode")?;
+        let mut child = tokio::process::Command::new(&bin)
             .args(["run", "--model", &self.model, "--format", "default"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| ProviderError::Transport(format!("spawn opencode: {e}")))?;
+            .map_err(|e| ProviderError::Transport(format!("spawn opencode ({bin}): {e}")))?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(full_prompt.as_bytes())
@@ -346,5 +456,38 @@ mod tests {
         let out = complete_with_timeout(&p, "s", "u", Duration::from_secs(2)).await;
         // Note: mock returns raw; complete_with_timeout returns provider output as-is.
         assert_eq!(out.unwrap(), "  polished  ");
+    }
+
+    #[test]
+    fn resolve_explicit_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("my-opencode");
+        std::fs::write(&bin, "#!/bin/sh\necho hi\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&bin, perms).unwrap();
+        }
+        let got = resolve_cli(Some(bin.to_str().unwrap()), "opencode").unwrap();
+        assert_eq!(got, bin.display().to_string());
+    }
+
+    #[test]
+    fn resolve_explicit_missing_errors_clearly() {
+        let err = resolve_cli(Some("/nonexistent-xyz/proofd-opencode"), "opencode")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("provider_bin"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_missing_binary_mentions_provider_bin() {
+        let err = resolve_cli(None, "definitely-not-a-real-binary-xyz")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("provider_bin"), "got: {err}");
+        assert!(err.contains("LaunchAgent"), "got: {err}");
     }
 }

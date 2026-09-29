@@ -48,11 +48,34 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.proofd.plist
 
 - `claude`: `claude -p --model <model> --output-format text`, prompt via stdin.
   Verify flags with `claude --help` before adding persistence/tool flags.
-- `opencode`: `opencode run --model <model> --format default`.
-  Verify with `opencode --help`; flags drift.
+- `opencode`: `opencode run --model <provider/model> --format default`,
+  prompt via stdin. `--model` needs the `provider/model` form
+  (e.g. `opencode/mimo-v2.6-flash-free`); bare names fail server-side.
+  Verify with `opencode run --help`; flags drift.
 - `openai-compat`: `POST {base_url}/chat/completions`.
 
 Timeout enforced by caller; empty output is an error and is never pasted.
+
+### LaunchAgent PATH pitfall (`spawn ... No such file or directory`)
+
+`proofd` as a LaunchAgent runs with a minimal `PATH`
+(`/usr/bin:/bin:/usr/sbin:/sbin`), so `opencode` in
+`/opt/homebrew/bin` (or `claude` in `~/.local/bin`) is invisible even
+though it works in your terminal. `proofd` now searches `PATH` plus
+`/opt/homebrew/bin`, `/usr/local/bin`, `~/.cargo/bin`, `~/.local/bin`,
+`~/.opencode/bin`, `~/.bun/bin`, and reports the searched `PATH` when
+missing. Pick one fix:
+
+```toml
+# ~/.config/proofd/config.toml — most robust
+provider = "opencode"
+model = "opencode/mimo-v2.6-flash-free"
+provider_bin = "/opt/homebrew/bin/opencode"
+```
+
+or add a `PATH` to `~/Library/LaunchAgents/com.proofd.plist` (see
+`contrib/com.proofd.plist`), then
+`launchctl bootout gui/$UID/com.proofd; launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.proofd.plist`.
 
 ## Limitations
 

@@ -13,6 +13,15 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <!-- LaunchAgents get a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so
+       Homebrew (~/.cargo/bin, ~/.local/bin, /opt/homebrew/bin) CLIs are
+       invisible. Either set provider_bin in config.toml (preferred) or
+       uncomment the PATH below. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/YOU/.cargo/bin:/Users/YOU/.local/bin:/Users/YOU/.opencode/bin</string>
+  </dict>
   <key>StandardOutPath</key>
   <string>/tmp/proofd.out.log</string>
   <key>StandardErrorPath</key>

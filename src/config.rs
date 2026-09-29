@@ -36,6 +36,13 @@ pub struct Config {
     pub model: String,
     #[serde(default)]
     pub base_url: Option<String>,
+    /// Optional absolute path to the provider CLI (`claude` / `opencode`).
+    /// Unset means PATH lookup plus common macOS locations
+    /// (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, ...).
+    /// Needed because LaunchAgents run with a minimal PATH that usually
+    /// lacks Homebrew / cargo / `~/.local/bin`.
+    #[serde(default)]
+    pub provider_bin: Option<String>,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
     #[serde(default = "default_hotkey")]
@@ -66,6 +73,7 @@ impl Default for Config {
             provider: ProviderKind::default(),
             model: default_model(),
             base_url: None,
+            provider_bin: None,
             timeout_secs: default_timeout_secs(),
             hotkey: default_hotkey(),
             max_input_chars: default_max_input_chars(),
@@ -179,6 +187,11 @@ fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> 
     if cfg.max_input_chars == 0 {
         return Err(invalid("`max_input_chars` must be > 0"));
     }
+    if let Some(bin) = cfg.provider_bin.as_ref() {
+        if bin.trim().is_empty() {
+            return Err(invalid("`provider_bin` must not be empty"));
+        }
+    }
     if cfg.provider == ProviderKind::OpenAICompat {
         match &cfg.base_url {
             Some(u) if !u.trim().is_empty() => {}
@@ -193,6 +206,13 @@ fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> 
     if let Some(u) = cfg.base_url.take() {
         let trimmed = u.trim().trim_end_matches('/').to_string();
         cfg.base_url = Some(trimmed);
+    }
+    // Normalize provider_bin whitespace; treat empty as unset (validated above).
+    if let Some(b) = cfg.provider_bin.take() {
+        let trimmed = b.trim().to_string();
+        if !trimmed.is_empty() {
+            cfg.provider_bin = Some(trimmed);
+        }
     }
     Ok(())
 }
@@ -259,5 +279,16 @@ max_input_chars = 2000
             .unwrap_err()
             .to_string();
         assert!(err.contains("invalid config"), "got: {err}");
+    }
+
+    #[test]
+    fn provider_bin_optional_defaults_to_none() {
+        let cfg = parse_toml("provider = \"opencode\"\nmodel = \"x/y\"", "p").unwrap();
+        assert_eq!(cfg.provider_bin, None);
+        let cfg = parse_toml("provider_bin = \"/opt/homebrew/bin/opencode\"", "p").unwrap();
+        assert_eq!(
+            cfg.provider_bin.as_deref(),
+            Some("/opt/homebrew/bin/opencode")
+        );
     }
 }

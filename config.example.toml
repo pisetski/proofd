@@ -6,13 +6,25 @@
 
 # Provider backend: "claude" | "opencode" | "openai-compat"
 # - claude: shells out to `claude -p --model <model> --output-format text`, prompt via stdin.
-# - opencode: shells out to `opencode run --model <model> --format default` (verify with `opencode --help`; flags drift).
+# - opencode: shells out to `opencode run --model <provider/model> --format default`, prompt via stdin.
+#   NOTE: opencode --model needs the `provider/model` form, e.g. "opencode/mimo-v2.6-flash-free",
+#   not a bare model name (bare names fail server-side with UnknownError).
 # - openai-compat: POSTs to {base_url}/chat/completions with OpenAI-compatible schema.
 provider = "claude"
 
 # Model passed to the provider CLI or API.
 # Conservative default; e.g. Claude Haiku-class for fast, cheap polishing.
+# For opencode, use the provider/model form, e.g. "opencode/mimo-v2.6-flash-free".
 model = "haiku"
+
+# Optional absolute path to the provider CLI. Unset means PATH lookup plus
+# common macOS locations (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin,
+# ~/.cargo/bin, ~/.opencode/bin, ...). You NEED this (or a LaunchAgent PATH)
+# when running as a LaunchAgent, whose default PATH lacks Homebrew.
+# Examples:
+# provider_bin = "/opt/homebrew/bin/opencode"
+# provider_bin = "/Users/YOU/.local/bin/claude"
+# provider_bin = "~/.cargo/bin/claude"
 
 # Only used by openai-compat. Base URL without trailing path, e.g. "http://localhost:11434/v1".
 # base_url = "http://localhost:11434/v1"
