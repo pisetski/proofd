@@ -261,12 +261,41 @@ impl Provider for ClaudeCli {
 /// Syntax: `opencode run --model <provider/model> --format default`,
 /// prompt via stdin. NOTE: `--model` needs the `provider/model` form
 /// (e.g. `opencode/mimo-v2.6-flash-free`); a bare model name fails server-side.
+///
+/// The child runs with `--dir` pointed at an empty per-user sandbox dir (see
+/// [`opencode_sandbox_dir`]): `opencode run` is agentic and otherwise picks up
+/// skills/repo files from the daemon's working directory (observed: a
+/// `Skill "proofread"` loading nondeterministically and turning the revision
+/// into an analysis essay, which must never be pasted).
 #[derive(Debug, Clone)]
 pub struct OpencodeCli {
     pub model: String,
     /// Optional explicit binary path (from `provider_bin`). `None` means
     /// PATH lookup plus common macOS locations.
     pub bin: Option<String>,
+}
+
+/// Empty per-user working directory for `opencode run` children.
+///
+/// Created once per process under the user cache dir
+/// (`~/Library/Caches/proofd/opencode-sandbox` on macOS). Returns `None` if
+/// the dir cannot be established, in which case the caller runs without
+/// `--dir` (degraded isolation, still functional).
+pub fn opencode_sandbox_dir() -> Option<std::path::PathBuf> {
+    static SANDBOX: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    SANDBOX
+        .get_or_init(|| {
+            let base = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
+            let dir = base.join("proofd").join("opencode-sandbox");
+            match std::fs::create_dir_all(&dir) {
+                Ok(()) => Some(dir),
+                Err(e) => {
+                    tracing::warn!("opencode sandbox unavailable at {}: {e}", dir.display());
+                    None
+                }
+            }
+        })
+        .clone()
 }
 
 #[async_trait::async_trait]
@@ -278,8 +307,14 @@ impl Provider for OpencodeCli {
         let t = std::time::Instant::now();
         let bin = resolve_cli(self.bin.as_deref(), "opencode")?;
         let resolve_ms = t.elapsed().as_millis();
-        let mut child = tokio::process::Command::new(&bin)
-            .args(["run", "--model", &self.model, "--format", "default"])
+        let mut cmd = tokio::process::Command::new(&bin);
+        cmd.args(["run", "--model", &self.model, "--format", "default"]);
+        // Isolate the agent from the daemon's cwd (see struct docs). If the
+        // sandbox is unavailable, run inherits cwd as before.
+        if let Some(dir) = opencode_sandbox_dir() {
+            cmd.args(["--dir", &dir.display().to_string()]);
+        }
+        let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -419,6 +454,22 @@ pub async fn complete_with_timeout<P: Provider>(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn opencode_sandbox_is_stable_and_empty_of_skills() {
+        let a = opencode_sandbox_dir().expect("sandbox must exist in test env");
+        let b = opencode_sandbox_dir().expect("sandbox must be cached");
+        assert_eq!(a, b);
+        assert!(a.is_dir(), "got: {}", a.display());
+        // Isolation contract: no skill manifests where the agent could read them.
+        for entry in ["AGENTS.md", "SKILL.md", "skills", ".opencode"] {
+            assert!(
+                !a.join(entry).exists(),
+                "sandbox contaminated: {}",
+                a.join(entry).display()
+            );
+        }
+    }
 
     #[test]
     fn sanitize_trims_normal_output() {
