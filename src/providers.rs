@@ -213,8 +213,11 @@ pub struct ClaudeCli {
 impl Provider for ClaudeCli {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
         use tokio::io::AsyncWriteExt;
+        let total = std::time::Instant::now();
         let full_prompt = format!("{system}\n\n{user}");
+        let t = std::time::Instant::now();
         let bin = resolve_cli(self.bin.as_deref(), "claude")?;
+        let resolve_ms = t.elapsed().as_millis();
         let mut child = tokio::process::Command::new(&bin)
             .args(["-p", "--model", &self.model, "--output-format", "text"])
             .stdin(std::process::Stdio::piped())
@@ -228,10 +231,19 @@ impl Provider for ClaudeCli {
                 .await
                 .map_err(|e| ProviderError::Transport(format!("write claude stdin: {e}")))?;
         }
+        let t = std::time::Instant::now();
         let out = child
             .wait_with_output()
             .await
             .map_err(|e| ProviderError::Transport(format!("wait claude: {e}")))?;
+        let wait_ms = t.elapsed().as_millis();
+        tracing::debug!(
+            "claude timings resolve={}ms wait={}ms total={}ms model={}",
+            resolve_ms,
+            wait_ms,
+            total.elapsed().as_millis(),
+            self.model,
+        );
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             return Err(ProviderError::Failed(format!(
@@ -261,8 +273,11 @@ pub struct OpencodeCli {
 impl Provider for OpencodeCli {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
         use tokio::io::AsyncWriteExt;
+        let total = std::time::Instant::now();
         let full_prompt = format!("{system}\n\n{user}");
+        let t = std::time::Instant::now();
         let bin = resolve_cli(self.bin.as_deref(), "opencode")?;
+        let resolve_ms = t.elapsed().as_millis();
         let mut child = tokio::process::Command::new(&bin)
             .args(["run", "--model", &self.model, "--format", "default"])
             .stdin(std::process::Stdio::piped())
@@ -276,10 +291,19 @@ impl Provider for OpencodeCli {
                 .await
                 .map_err(|e| ProviderError::Transport(format!("write opencode stdin: {e}")))?;
         }
+        let t = std::time::Instant::now();
         let out = child
             .wait_with_output()
             .await
             .map_err(|e| ProviderError::Transport(format!("wait opencode: {e}")))?;
+        let wait_ms = t.elapsed().as_millis();
+        tracing::debug!(
+            "opencode timings resolve={}ms wait={}ms total={}ms model={}",
+            resolve_ms,
+            wait_ms,
+            total.elapsed().as_millis(),
+            self.model,
+        );
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             return Err(ProviderError::Failed(format!(
@@ -329,6 +353,7 @@ pub struct OpenAICompat {
 #[async_trait::async_trait]
 impl Provider for OpenAICompat {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
+        let total = std::time::Instant::now();
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = serde_json::json!({
             "model": self.model,
@@ -338,6 +363,7 @@ impl Provider for OpenAICompat {
             ],
             "temperature": 0.2,
         });
+        let t = std::time::Instant::now();
         let resp = self
             .client
             .post(&url)
@@ -345,6 +371,7 @@ impl Provider for OpenAICompat {
             .send()
             .await
             .map_err(|e| ProviderError::Transport(format!("openai-compat request: {e}")))?;
+        let send_ms = t.elapsed().as_millis();
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
@@ -353,10 +380,19 @@ impl Provider for OpenAICompat {
                 text.trim()
             )));
         }
+        let t = std::time::Instant::now();
         let v: serde_json::Value = resp
             .json()
             .await
             .map_err(|e| ProviderError::Transport(format!("openai-compat decode: {e}")))?;
+        let decode_ms = t.elapsed().as_millis();
+        tracing::debug!(
+            "openai-compat timings send={}ms decode={}ms total={}ms model={}",
+            send_ms,
+            decode_ms,
+            total.elapsed().as_millis(),
+            self.model,
+        );
         let content = v
             .pointer("/choices/0/message/content")
             .and_then(|c| c.as_str())

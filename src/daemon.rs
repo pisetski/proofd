@@ -5,7 +5,7 @@ use crate::prompt::build_revised_only;
 use crate::providers::{complete_with_timeout, Provider};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -73,15 +73,22 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
     async fn run_flow(&self) -> Result<(), DaemonError> {
         let cfg = &self.inner.config;
         let platform = &self.inner.platform;
+        let total_start = Instant::now();
 
+        let t0 = Instant::now();
         let pid0 = platform
             .current_app_pid()
             .map_err(|e| DaemonError::Platform(e.to_string()))?;
+        let pid0_ms = t0.elapsed().as_millis();
+
+        let t0 = Instant::now();
         let saved: SavedClip = platform
             .save_clipboard()
             .map_err(|e| DaemonError::Platform(e.to_string()))?;
+        let save_ms = t0.elapsed().as_millis();
 
         // 4-5. Selection first, then focused-text fallback.
+        let t0 = Instant::now();
         let mut text: Option<String> = platform
             .copy_selection()
             .map_err(|e| {
@@ -89,7 +96,10 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
                 DaemonError::Platform(e.to_string())
             })?
             .filter(|s| !s.trim().is_empty());
+        let copy_sel_ms = t0.elapsed().as_millis();
+        let mut copy_fallback_ms: u128 = 0;
         if text.is_none() {
+            let t0 = Instant::now();
             text = platform
                 .copy_all_focused_text()
                 .map_err(|e| {
@@ -97,6 +107,7 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
                     DaemonError::Platform(e.to_string())
                 })?
                 .filter(|s| !s.trim().is_empty());
+            copy_fallback_ms = t0.elapsed().as_millis();
         }
         let Some(input) = text else {
             let _ = platform.restore_clipboard(saved);
@@ -121,12 +132,19 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
         // 7-8. Provider with timeout; sanitize happens in provider.
         let (system, user) = build_revised_only(&input);
         let timeout = Duration::from_secs(cfg.timeout_secs);
+        let t0 = Instant::now();
         let revised = complete_with_timeout(&self.inner.provider, &system, &user, timeout)
             .await
             .map_err(|e| {
                 let _ = platform.restore_clipboard(saved.clone());
+                tracing::warn!(
+                    "provider failed after {}ms (total {}ms): {e}",
+                    t0.elapsed().as_millis(),
+                    total_start.elapsed().as_millis()
+                );
                 DaemonError::Provider(e.to_string())
             })?;
+        let provider_ms = t0.elapsed().as_millis();
         if revised.trim().is_empty() {
             let _ = platform.restore_clipboard(saved);
             let msg = "provider returned empty output; original kept";
@@ -136,10 +154,12 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
         }
 
         // 9. Abort if focus moved while the model ran.
+        let t0 = Instant::now();
         let pid1 = platform.current_app_pid().map_err(|e| {
             let _ = platform.restore_clipboard(saved.clone());
             DaemonError::Platform(e.to_string())
         })?;
+        let pid1_ms = t0.elapsed().as_millis();
         if pid1 != pid0 {
             let _ = platform.restore_clipboard(saved);
             tracing::warn!("focus changed {} -> {}; paste aborted", pid0, pid1);
@@ -153,6 +173,7 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
 
         // 10-13. Simulated paste only (never AXSetValue), then restore.
         // Single Cmd+V keeps native single Cmd+Z undo.
+        let t0 = Instant::now();
         if let Err(e) = platform.paste_text(&revised) {
             let _ = platform.restore_clipboard(saved);
             let msg = format!("paste failed: {e}");
@@ -160,9 +181,25 @@ impl<P: Platform, R: Provider> Daemon<P, R> {
             notify_failure("proofd failed", "Paste failed; original text was kept.").await;
             return Err(DaemonError::Platform(msg));
         }
+        let paste_ms = t0.elapsed().as_millis();
+        let t0 = Instant::now();
         let _ = platform.restore_clipboard(saved);
-        // 14. Silent success: only log.
-        tracing::info!("polish ok ({} -> {} chars)", input.len(), revised.len());
+        let restore_ms = t0.elapsed().as_millis();
+        // 14. Silent success: only log (timings for perf triage).
+        tracing::info!(
+            "polish ok ({} -> {} chars) timings total={}ms pid0={}ms save={}ms copy_sel={}ms copy_fallback={}ms provider={}ms pid1={}ms paste={}ms restore={}ms",
+            input.len(),
+            revised.len(),
+            total_start.elapsed().as_millis(),
+            pid0_ms,
+            save_ms,
+            copy_sel_ms,
+            copy_fallback_ms,
+            provider_ms,
+            pid1_ms,
+            paste_ms,
+            restore_ms,
+        );
         Ok(())
     }
 

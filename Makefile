@@ -26,4 +26,4 @@ restart: unload load
 reinstall: install restart
 
 logs:
-	tail -f /tmp/proofd.out.log
+	tail -f /tmp/proofd.err.log /tmp/proofd.out.log
