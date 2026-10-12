@@ -4,9 +4,11 @@ SRC := target/release/$(BIN)
 DEST := $(HOME)/.cargo/bin/$(BIN)
 LABEL := com.proofd
 PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
+LOG_OUT := /tmp/proofd.out.log
+LOG_ERR := /tmp/proofd.err.log
 
 .NOTPARALLEL:
-.PHONY: build install unload load restart reinstall logs
+.PHONY: build install unload load restart reinstall logs clear-logs
 
 build:
 	cargo build --release
@@ -21,9 +23,13 @@ unload:
 load:
 	launchctl bootstrap $(DOMAIN) $(PLIST) || (sleep 1 && launchctl bootstrap $(DOMAIN) $(PLIST))
 
-restart: unload load
+clear-logs:
+	: > $(LOG_OUT)
+	: > $(LOG_ERR)
+
+restart: unload clear-logs load
 
 reinstall: install restart
 
 logs:
-	tail -f /tmp/proofd.err.log /tmp/proofd.out.log
+	tail -f $(LOG_ERR) $(LOG_OUT)
