@@ -12,14 +12,11 @@ pub enum PlatformError {
     AppQuery(String),
 }
 
-/// Saved plaintext clipboard contents (MVP: plaintext only).
 #[derive(Debug, Clone, Default)]
 pub struct SavedClip {
     pub text: Option<String>,
 }
 
-/// Platform abstraction. Never mutates app text with AXSetValue;
-/// replacement is via simulated Cmd+V only.
 pub trait Platform: Send + Sync {
     fn current_app_pid(&self) -> Result<u32, PlatformError>;
     fn save_clipboard(&self) -> Result<SavedClip, PlatformError>;
@@ -27,49 +24,37 @@ pub trait Platform: Send + Sync {
     fn copy_selection(&self) -> Result<Option<String>, PlatformError>;
     fn copy_all_focused_text(&self) -> Result<Option<String>, PlatformError>;
     fn paste_text(&self, text: &str) -> Result<(), PlatformError>;
-    fn set_clipboard_text(&self, text: &str) -> Result<(), PlatformError>;
 }
 
-/// Non-macOS stub: returns a clear unsupported-platform error.
 #[cfg(not(target_os = "macos"))]
 pub struct UnsupportedPlatform;
 
 #[cfg(not(target_os = "macos"))]
+fn macos_only<T>() -> Result<T, PlatformError> {
+    Err(PlatformError::Unsupported(
+        "proofd MVP is macOS-only".to_string(),
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
 impl Platform for UnsupportedPlatform {
     fn current_app_pid(&self) -> Result<u32, PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
+        macos_only()
     }
     fn save_clipboard(&self) -> Result<SavedClip, PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
+        macos_only()
     }
     fn restore_clipboard(&self, _clip: SavedClip) -> Result<(), PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
+        macos_only()
     }
     fn copy_selection(&self) -> Result<Option<String>, PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
+        macos_only()
     }
     fn copy_all_focused_text(&self) -> Result<Option<String>, PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
+        macos_only()
     }
     fn paste_text(&self, _text: &str) -> Result<(), PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
-    }
-    fn set_clipboard_text(&self, _text: &str) -> Result<(), PlatformError> {
-        Err(PlatformError::Unsupported(
-            "proofd MVP is macOS-only".to_string(),
-        ))
+        macos_only()
     }
 }
 

@@ -1,9 +1,5 @@
 use std::path::PathBuf;
 
-/// Embedded base skill. Override with `proofread.md` in the config dir if present.
-/// Searched as `$XDG_CONFIG_HOME/proofd/proofread.md`, then
-/// `~/.config/proofd/proofread.md`, then the platform-native config dir
-/// (`~/Library/Application Support/proofd/proofread.md` on macOS).
 const EMBEDDED_SKILL: &str = include_str!("../skills/proofread.md");
 
 const REVISED_ONLY_CONSTRAINTS: &str = r#"Hard constraints (must follow exactly):
@@ -18,7 +14,6 @@ Preserve the original language.
 Preserve Markdown, code blocks, indentation, and line breaks.
 If the text is already clean, return the input verbatim."#;
 
-/// Load the proofreading skill text, preferring the user override.
 pub fn load_skill() -> String {
     for path in skill_candidate_paths() {
         if let Ok(contents) = std::fs::read_to_string(&path) {
@@ -34,18 +29,6 @@ pub fn skill_candidate_paths() -> Vec<PathBuf> {
     crate::config::candidate_paths("proofread.md")
 }
 
-pub fn skill_override_path() -> Option<PathBuf> {
-    let candidates = skill_candidate_paths();
-    candidates
-        .iter()
-        .find(|p| p.exists())
-        .or_else(|| candidates.first())
-        .cloned()
-}
-
-/// Build (system, user) messages with revised-only constraints.
-/// User message contains only the text to revise, clearly delimited,
-/// preserving input exactly (including multiline / code blocks).
 pub fn build_revised_only(input: &str) -> (String, String) {
     let skill = load_skill();
     let system = format!("{skill}\n\n{REVISED_ONLY_CONSTRAINTS}");
@@ -88,7 +71,6 @@ mod tests {
             "Here:\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n- bullet\n  indented";
         let (_, user) = build_revised_only(input);
         assert!(user.contains(input));
-        // Delimiters must not mangle interior fences.
         assert_eq!(user.matches("```").count(), 2);
     }
 }

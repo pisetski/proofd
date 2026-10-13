@@ -1,6 +1,3 @@
-//! Error notification only. No sound or beep. Success is silent.
-
-/// Show a macOS notification on failure paths. Best-effort; never fails the daemon.
 pub async fn notify_failure(summary: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {

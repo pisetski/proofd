@@ -1,14 +1,13 @@
 use proofd_lib::config;
 use tracing::info;
 
-// `current_thread` keeps `run_macos` on the main thread, which the event-tap
-// backend requires: the main CFRunLoop must spin for tap events to dispatch.
+// current_thread keeps the macOS event loop on the main thread, where the main CFRunLoop spins.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let resolved = config::config_path();
-    let cfg = config::load_from_path(None).map_err(|e| {
+    let config_path = config::config_path();
+    let cfg = config::load_from_path(config_path.clone()).map_err(|e| {
         eprintln!("proofd: {e}");
         e
     })?;
@@ -17,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.provider,
         cfg.model,
         cfg.hotkey,
-        resolved
+        config_path
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "<none>".to_string())
@@ -25,7 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(target_os = "macos")]
     {
-        use proofd_lib::daemon::{run_macos, Daemon};
+        use proofd_lib::daemon::Daemon;
+        use proofd_lib::macos_loop::run_macos;
         use proofd_lib::platform_macos::MacosPlatform;
         use proofd_lib::providers::from_config;
 

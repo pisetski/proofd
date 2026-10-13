@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::PathBuf;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub enum ProviderKind {
     #[default]
     #[serde(rename = "claude", alias = "Claude")]
@@ -28,7 +28,7 @@ impl std::fmt::Display for ProviderKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Config {
     #[serde(default)]
     pub provider: ProviderKind,
@@ -36,11 +36,6 @@ pub struct Config {
     pub model: String,
     #[serde(default)]
     pub base_url: Option<String>,
-    /// Optional absolute path to the provider CLI (`claude` / `opencode`).
-    /// Unset means PATH lookup plus common macOS locations
-    /// (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, ...).
-    /// Needed because LaunchAgents run with a minimal PATH that usually
-    /// lacks Homebrew / cargo / `~/.local/bin`.
     #[serde(default)]
     pub provider_bin: Option<String>,
     #[serde(default = "default_timeout_secs")]
@@ -100,20 +95,15 @@ pub fn candidate_paths(filename: &str) -> Vec<PathBuf> {
             out.push(p);
         }
     };
-    // 1. Explicit XDG location, honored on all platforms (including macOS
-    //    where `dirs::config_dir()` ignores it).
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         let xdg = PathBuf::from(xdg);
         if !xdg.as_os_str().is_empty() {
             push_unique(xdg.join("proofd").join(filename));
         }
     }
-    // 2. Plain `~/.config` fallback so macOS reads the documented path.
     if let Some(home) = dirs::home_dir() {
         push_unique(home.join(".config").join("proofd").join(filename));
     }
-    // 3. Platform-native dir (`~/Library/Application Support/...` on macOS).
-    //    Kept for backward compat with installs that already use it.
     if let Some(d) = dirs::config_dir() {
         push_unique(d.join("proofd").join(filename));
     }
@@ -126,10 +116,6 @@ pub fn config_candidates() -> Vec<PathBuf> {
 
 pub fn config_path() -> Option<PathBuf> {
     let candidates = config_candidates();
-    // Prefer the first file that actually exists so `~/.config` works on
-    // macOS while installs using Application Support keep working.
-    // With no file present, return the preferred location (first candidate)
-    // so callers/error messages point at the documented path.
     candidates
         .iter()
         .find(|p| p.exists())
@@ -137,14 +123,6 @@ pub fn config_path() -> Option<PathBuf> {
         .cloned()
 }
 
-pub fn config_example() -> &'static str {
-    include_str!("../config.example.toml")
-}
-
-/// Load config from `path`. `None` path tries [`config_candidates`] in order
-/// (`$XDG_CONFIG_HOME`, then `~/.config`, then platform-native dir) and uses
-/// the first file that exists.
-/// Missing file returns defaults; invalid file returns a clear error.
 pub fn load_from_path(path: Option<PathBuf>) -> Result<Config, ConfigError> {
     let path = path.or_else(config_path);
     let Some(path) = path else {
@@ -160,7 +138,6 @@ pub fn load_from_path(path: Option<PathBuf>) -> Result<Config, ConfigError> {
     parse_toml(&contents, &path.display().to_string())
 }
 
-/// Parse TOML contents, used by loader and tests.
 pub fn parse_toml(contents: &str, path_for_errors: &str) -> Result<Config, ConfigError> {
     let mut cfg: Config = toml::from_str(contents).map_err(|e| ConfigError::Invalid {
         path: path_for_errors.to_string(),
@@ -202,12 +179,10 @@ fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> 
             }
         }
     }
-    // Normalize trailing slash on base_url.
     if let Some(u) = cfg.base_url.take() {
         let trimmed = u.trim().trim_end_matches('/').to_string();
         cfg.base_url = Some(trimmed);
     }
-    // Normalize provider_bin whitespace; treat empty as unset (validated above).
     if let Some(b) = cfg.provider_bin.take() {
         let trimmed = b.trim().to_string();
         if !trimmed.is_empty() {
@@ -247,7 +222,6 @@ max_input_chars = 2000
         let cfg = parse_toml(toml, "test").unwrap();
         assert_eq!(cfg.provider, ProviderKind::OpenAICompat);
         assert_eq!(cfg.model, "llama3");
-        // Trailing slash normalized.
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:11434/v1"));
         assert_eq!(cfg.timeout_secs, 20);
     }

@@ -1,23 +1,22 @@
-//! Global hotkey combo for the passive CGEventTap listener.
-//!
-//! The daemon only *observes* key-down events (tap is `ListenOnly`, events
-//! are never swallowed or modified), so this is matching, not interception:
-//! parse a `Ctrl-Shift-Y`-style string into modifier bits + virtual keycode,
-//! then compare against each key-down event.
-
 use core_graphics::event::{CGEventFlags, CGKeyCode, KeyCode};
 use std::fmt;
 
-/// Modifier flag bits that participate in matching. All other bits (caps
-/// lock, fn, numpad, non-coalesced, ...) are ignored so the combo fires
-/// regardless of incidental keyboard state.
-const MOD_MASK_BITS: u64 = 0x00020000 | 0x00040000 | 0x00080000 | 0x00100000; // shift|ctrl|alt|cmd
+const SHIFT_BIT: u64 = 0x00020000;
+const CTRL_BIT: u64 = 0x00040000;
+const ALT_BIT: u64 = 0x00080000;
+const CMD_BIT: u64 = 0x00100000;
+const MOD_MASK_BITS: u64 = SHIFT_BIT | CTRL_BIT | ALT_BIT | CMD_BIT;
+const MODIFIER_LABELS_IN_ORDER: [(u64, &str); 4] = [
+    (CTRL_BIT, "ctrl"),
+    (SHIFT_BIT, "shift"),
+    (ALT_BIT, "alt"),
+    (CMD_BIT, "cmd"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HotkeyCombo {
     mods: CGEventFlags,
     keycode: CGKeyCode,
-    /// Normalized `ctrl+shift+y`-style label for logs.
     label: String,
 }
 
@@ -39,14 +38,10 @@ impl fmt::Display for HotkeyCombo {
     }
 }
 
-/// Default combo: Ctrl-Option-P.
 pub fn default_combo() -> HotkeyCombo {
     parse_combo("Ctrl-Alt-P").expect("default combo must parse")
 }
 
-/// Parse `Ctrl-Shift-Y` / `Ctrl+Shift+Y` / `Ctrl-Option-P` styles.
-/// Modifiers: `Ctrl`/`Control`, `Alt`/`Option`, `Shift`, `Cmd`/`Command`/`Super`.
-/// Key: single letter or digit (`Y`, `KeyY` also accepted).
 pub fn parse_combo(s: &str) -> Result<HotkeyCombo, String> {
     let mut mods_bits: u64 = 0;
     let mut key: Option<(CGKeyCode, String)> = None;
@@ -56,10 +51,10 @@ pub fn parse_combo(s: &str) -> Result<HotkeyCombo, String> {
             return Err(format!("invalid hotkey {s:?}: empty part"));
         }
         match t.as_str() {
-            "CTRL" | "CONTROL" => mods_bits |= 0x00040000,
-            "ALT" | "OPTION" => mods_bits |= 0x00080000,
-            "SHIFT" => mods_bits |= 0x00020000,
-            "CMD" | "COMMAND" | "SUPER" => mods_bits |= 0x00100000,
+            "CTRL" | "CONTROL" => mods_bits |= CTRL_BIT,
+            "ALT" | "OPTION" => mods_bits |= ALT_BIT,
+            "SHIFT" => mods_bits |= SHIFT_BIT,
+            "CMD" | "COMMAND" | "SUPER" => mods_bits |= CMD_BIT,
             _ => {
                 if key.is_some() {
                     return Err(format!("invalid hotkey {s:?}: multiple keys"));
@@ -78,25 +73,17 @@ pub fn parse_combo(s: &str) -> Result<HotkeyCombo, String> {
     let Some((keycode, key_name)) = key else {
         return Err(format!("invalid hotkey {s:?}: no key"));
     };
-    // Canonical label order: ctrl, shift, alt, cmd, key.
-    let mut ordered: Vec<String> = Vec::new();
-    if mods_bits & 0x00040000 != 0 {
-        ordered.push("ctrl".to_string());
-    }
-    if mods_bits & 0x00020000 != 0 {
-        ordered.push("shift".to_string());
-    }
-    if mods_bits & 0x00080000 != 0 {
-        ordered.push("alt".to_string());
-    }
-    if mods_bits & 0x00100000 != 0 {
-        ordered.push("cmd".to_string());
-    }
-    ordered.push(key_name);
+    let label = MODIFIER_LABELS_IN_ORDER
+        .iter()
+        .filter(|(bit, _)| mods_bits & bit != 0)
+        .map(|(_, name)| name.to_string())
+        .chain(std::iter::once(key_name))
+        .collect::<Vec<_>>()
+        .join("+");
     Ok(HotkeyCombo {
         mods: CGEventFlags::from_bits_truncate(mods_bits),
         keycode,
-        label: ordered.join("+"),
+        label,
     })
 }
 

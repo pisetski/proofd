@@ -1,15 +1,3 @@
-//! macOS platform primitives.
-//!
-//! - Key simulation via `enigo` (Cmd+C / Cmd+A / Cmd+V).
-//! - Plaintext clipboard via `arboard` (MVP: rich contents NOT preserved).
-//! - Front app PID via `lsappinfo` (fast, ~10ms), with `osascript`
-//!   (System Events) as fallback.
-//! - Never mutates app text with AXSetValue; replacement is Cmd+V only.
-//! - Fallback `copy_all_focused_text` uses Cmd+A, Cmd+C only after selection
-//!   copy returns empty. It depends on focused text-field behavior and may
-//!   select more than intended if focus is not in a text field; daemon caps
-//!   input with `max_input_chars`.
-
 use crate::platform::{Platform, PlatformError, SavedClip};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -21,10 +9,6 @@ const CLIPBOARD_SETTLE_DELAY: Duration = Duration::from_millis(15);
 const PASTE_SETTLE_DELAY: Duration = Duration::from_millis(30);
 
 pub struct MacosPlatform {
-    /// Lazily initialized on first key simulation, and retried on every use
-    /// while missing: granting Accessibility later heals the daemon without
-    /// a restart, and a missing grant fails per-press (notify + log) instead
-    /// of crash-looping the whole daemon at startup.
     enigo: Mutex<Option<enigo::Enigo>>,
 }
 
@@ -99,9 +83,6 @@ impl MacosPlatform {
 
 impl Platform for MacosPlatform {
     fn current_app_pid(&self) -> Result<u32, PlatformError> {
-        // Fast path: `lsappinfo` (~10ms for both spawns) vs `osascript`
-        // (~130ms + AppleScript interpreter). Fall back to osascript if the
-        // output format ever changes.
         if let Ok(pid) = front_pid_via_lsappinfo() {
             return Ok(pid);
         }
@@ -124,13 +105,7 @@ impl Platform for MacosPlatform {
         }
     }
 
-    fn set_clipboard_text(&self, text: &str) -> Result<(), PlatformError> {
-        Self::clipboard_set_text(text)
-    }
-
     fn copy_selection(&self) -> Result<Option<String>, PlatformError> {
-        // Clear first so an empty selection is distinguishable from
-        // "clipboard unchanged".
         Self::clipboard_clear();
         std::thread::sleep(CLIPBOARD_SETTLE_DELAY);
         self.cmd_click('c')?;
@@ -139,7 +114,6 @@ impl Platform for MacosPlatform {
     }
 
     fn copy_all_focused_text(&self) -> Result<Option<String>, PlatformError> {
-        // Only call after selection copy returned empty (daemon enforces).
         self.cmd_click('a')?;
         std::thread::sleep(BETWEEN_KEYS_DELAY);
         Self::clipboard_clear();
@@ -151,7 +125,6 @@ impl Platform for MacosPlatform {
 
     fn paste_text(&self, text: &str) -> Result<(), PlatformError> {
         Self::clipboard_set_text(text)?;
-        // Small settle before pasting; restoring too soon pastes old contents.
         std::thread::sleep(PASTE_SETTLE_DELAY);
         self.cmd_click('v')?;
         std::thread::sleep(AFTER_PASTE_DELAY);
@@ -159,7 +132,6 @@ impl Platform for MacosPlatform {
     }
 }
 
-/// Fast front-app PID via two tiny `lsappinfo` spawns (~10ms total).
 fn front_pid_via_lsappinfo() -> Result<u32, PlatformError> {
     let asn_out = std::process::Command::new("/usr/bin/lsappinfo")
         .arg("front")
@@ -189,7 +161,6 @@ fn front_pid_via_lsappinfo() -> Result<u32, PlatformError> {
     parse_lsappinfo_pid(&String::from_utf8_lossy(&pid_out.stdout))
 }
 
-/// Legacy front-app PID via AppleScript (~130ms); fallback only.
 fn front_pid_via_osascript() -> Result<u32, PlatformError> {
     let out = std::process::Command::new("osascript")
         .args([
@@ -210,7 +181,6 @@ fn front_pid_via_osascript() -> Result<u32, PlatformError> {
         .map_err(|e| PlatformError::AppQuery(format!("parse front pid {:?}: {e}", s.trim())))
 }
 
-/// Parse `"pid"=1234` output of `lsappinfo info -only pid`.
 fn parse_lsappinfo_pid(s: &str) -> Result<u32, PlatformError> {
     let t = s.trim().trim_matches('"');
     let num = t.rsplit('=').next().unwrap_or("").trim().trim_matches('"');
@@ -228,17 +198,5 @@ mod tests {
         assert_eq!(parse_lsappinfo_pid("  \"pid\"=41086  ").unwrap(), 41086);
         assert!(parse_lsappinfo_pid("").is_err());
         assert!(parse_lsappinfo_pid("ASN:0x0-0x43043:").is_err());
-    }
-
-    #[test]
-    fn front_pid_matches_osascript() {
-        // Both backends must agree on the front app. Skipped when neither
-        // helper is available (e.g. headless CI).
-        let fast = front_pid_via_lsappinfo();
-        let slow = front_pid_via_osascript();
-        match (fast, slow) {
-            (Ok(a), Ok(b)) => assert_eq!(a, b),
-            _ => eprintln!("skipping: lsappinfo or osascript unavailable"),
-        }
     }
 }
