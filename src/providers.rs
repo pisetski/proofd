@@ -7,7 +7,7 @@ use crate::config::{Config, ProviderKind};
 use std::time::Duration;
 use thiserror::Error;
 
-pub use cli_provider::{opencode_sandbox_dir, ClaudeCli, OpencodeCli};
+pub use cli_provider::{cli_sandbox_dir, ClaudeCli, OpencodeCli};
 pub use cli_resolver::resolve_cli;
 pub use openai_compat::OpenAICompat;
 pub use sanitize::{sanitize_output, strip_session_headers};

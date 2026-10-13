@@ -46,8 +46,10 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.proofd.plist
 
 ## Providers
 
-- `claude`: `claude -p --model <model> --output-format text`, prompt via stdin.
-  Verify flags with `claude --help` before adding persistence/tool flags.
+- `claude`: `claude -p --model <model> --output-format text`, text via stdin,
+  system prompt via `--system-prompt`. Runs isolated: empty cwd under the user
+  cache dir, no tools, no skills, no settings sources, no session persistence.
+  Verify flags with `claude --help`; avoid `--bare` (disables OAuth login).
 - `opencode`: `opencode run --model <provider/model> --format default`,
   prompt via stdin. `--model` needs the `provider/model` form
   (e.g. `opencode/mimo-v2.6-flash-free`); bare names fail server-side.

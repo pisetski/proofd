@@ -31,6 +31,8 @@ where
 
     let (hotkey_tx, hotkey_rx) = std::sync::mpsc::sync_channel::<()>(HOTKEY_QUEUE_CAPACITY);
     let combo_in_tap = combo.clone();
+    let tap_disabled = Arc::new(AtomicBool::new(false));
+    let tap_disabled_in_tap = tap_disabled.clone();
     let tap = CGEventTap::new(
         CGEventTapLocation::Session,
         CGEventTapPlacement::HeadInsertEventTap,
@@ -48,7 +50,8 @@ where
                     }
                 }
                 CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-                    tracing::warn!("event tap disabled by system ({event_type:?}); restart agent");
+                    tracing::warn!("event tap disabled by system ({event_type:?}); re-enabling");
+                    tap_disabled_in_tap.store(true, Ordering::SeqCst);
                 }
                 _ => {}
             }
@@ -71,6 +74,9 @@ where
         if shutdown.load(Ordering::SeqCst) {
             tracing::info!("shutdown");
             return Ok(());
+        }
+        if tap_disabled.swap(false, Ordering::SeqCst) {
+            tap.enable();
         }
         if drain_presses(&hotkey_rx) {
             dispatch_polish(&daemon);

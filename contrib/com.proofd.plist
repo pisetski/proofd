@@ -12,11 +12,16 @@
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
   <!-- LaunchAgents get a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so
        Homebrew (~/.cargo/bin, ~/.local/bin, /opt/homebrew/bin) CLIs are
        invisible. Either set provider_bin in config.toml (preferred) or
-       uncomment the PATH below. -->
+       keep the PATH below. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
