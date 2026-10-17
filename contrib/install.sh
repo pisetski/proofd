@@ -17,6 +17,11 @@
 
 set -euo pipefail
 
+# Kill any old proofd daemon processes (event tap version) that may still be running
+pkill -f "target/release/proofd$" 2>/dev/null || true
+pkill -f "proofd-service-host" 2>/dev/null || true
+sleep 1
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_NAME="proofd"
 APP_NAME="proofd.app"
@@ -101,6 +106,9 @@ log "  2. Open System Settings → Keyboard → Keyboard Shortcuts → Services"
 log "  3. Find 'Proofread Selection' under Text and make sure it's checked"
 log "  4. (Optional) Assign a keyboard shortcut to 'Proofread Selection'"
 log ""
+log "If something goes wrong, check the service log:"
+log "  tail -f ~/Library/Logs/proofd-service.log"
+log ""
 log "Then select text in any app → right-click → Services → Proofread Selection."
 
 # --- 7. Create default config if missing ---
@@ -133,3 +141,12 @@ log "Installation complete!"
 log ""
 log "The service runs proofd polish on the selected text and replaces it inline."
 log "No Accessibility or Input Monitoring permissions are required."
+log ""
+log "IMPORTANT — final steps to make the service appear:"
+log "  1. In Finder, right-click ~/Applications/proofd.app → Open (to bypass Gatekeeper)"
+log "  2. Open System Settings → Keyboard → Keyboard Shortcuts → Services"
+log "  3. Find 'Proofread Selection' under Text and make sure it's checked"
+log "  4. (Optional) Assign a keyboard shortcut to 'Proofread Selection'"
+log ""
+log "If something goes wrong, check the service log:"
+log "  tail -f ~/Library/Logs/proofd-service.log"
