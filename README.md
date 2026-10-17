@@ -17,6 +17,20 @@ cargo install --path .
 cargo build --release
 ```
 
+## CLI subcommands
+
+### `proofd polish`
+
+Reads text from stdin, polishes it, writes the result to stdout. No daemon, no hotkey, no permissions:
+
+```sh
+echo "helo world" | proofd polish
+```
+
+Useful as the engine behind a macOS Service, a shell alias, or an editor integration. Exits non-zero on empty input or provider failure.
+
+## Config
+
 Requires macOS Accessibility permission for simulated key events; macOS may
 also request Input Monitoring.
 

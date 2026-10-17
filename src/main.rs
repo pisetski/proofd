@@ -1,10 +1,19 @@
 use proofd_lib::config;
+use proofd_lib::daemon::polish_text;
+use proofd_lib::providers::from_config;
+use std::io::Read;
 use tracing::info;
 
 // current_thread keeps the macOS event loop on the main thread, where the main CFRunLoop spins.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
+
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() > 1 && args[1] == "polish" {
+        return run_polish().await;
+    }
 
     let config_path = config::config_path();
     let cfg = config::load_from_path(config_path.clone()).map_err(|e| {
@@ -46,4 +55,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+async fn run_polish() -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = config::config_path();
+    let cfg = config::load_from_path(config_path.clone()).map_err(|e| {
+        eprintln!("proofd: {e}");
+        e
+    })?;
+
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+
+    let provider = from_config(&cfg);
+
+    match polish_text(&input, &cfg, &provider).await {
+        Ok(revised) => {
+            print!("{revised}");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("proofd: {e}");
+            std::process::exit(1);
+        }
+    }
 }

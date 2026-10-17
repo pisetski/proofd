@@ -163,6 +163,28 @@ fn non_blank(text: Option<String>) -> Option<String> {
     text.filter(|s| !s.trim().is_empty())
 }
 
+/// Polishes `input` using the configured provider, with no platform/clipboard
+/// involvement. Suitable for a stdin/stdout CLI subcommand (zero permissions).
+pub async fn polish_text<P: Provider>(
+    input: &str,
+    config: &Config,
+    provider: &P,
+) -> Result<String, DaemonError> {
+    if input.trim().is_empty() {
+        return Err(DaemonError::NoText);
+    }
+
+    let (system, user) = build_revised_only(input);
+    let timeout = Duration::from_secs(config.timeout_secs);
+    let revised = complete_with_timeout(provider, &system, &user, timeout)
+        .await
+        .map_err(|e| DaemonError::Provider(e.to_string()))?;
+    if revised.trim().is_empty() {
+        return Err(DaemonError::EmptyOutput);
+    }
+    Ok(revised)
+}
+
 impl<P: Platform, R: Provider> Daemon<P, R> {
     pub fn new(config: Config, platform: P, provider: R) -> Self {
         Self {
