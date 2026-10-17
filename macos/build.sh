@@ -37,6 +37,10 @@ clang "$OBJC_SRC" \
 
 chmod +x "$BIN_DIR/proofd-service-host"
 
+# Ad-hoc codesign so Gatekeeper doesn't block the service host
+codesign --sign - --force "$BIN_DIR/proofd-service-host" 2>/dev/null || true
+codesign --sign - --force "$TMPDIR/$APP_NAME" 2>/dev/null || true
+
 # Copy Info.plist
 cp "$INFO_PLIST" "$TMPDIR/$APP_NAME/Contents/Info.plist"
 

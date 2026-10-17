@@ -92,7 +92,16 @@ log "Registering NSServices with Launch Services…"
 "$LOG_REGISTER" -f "$APP_PATH" 2>/dev/null || true
 # Touch to force Launch Services to re-scan
 touch "$APP_PATH"
-log "Done. The 'Proofread Selection' service is now available."
+log "Done. The 'Proofread Selection' service is now registered."
+
+log ""
+log "IMPORTANT — final steps to make the service appear:"
+log "  1. In Finder, right-click ~/Applications/proofd.app → Open (to bypass Gatekeeper)"
+log "  2. Open System Settings → Keyboard → Keyboard Shortcuts → Services"
+log "  3. Find 'Proofread Selection' under Text and make sure it's checked"
+log "  4. (Optional) Assign a keyboard shortcut to 'Proofread Selection'"
+log ""
+log "Then select text in any app → right-click → Services → Proofread Selection."
 
 # --- 7. Create default config if missing ---
 if [[ ! -f "$CONFIG_PATH" ]]; then
@@ -122,15 +131,5 @@ fi
 log ""
 log "Installation complete!"
 log ""
-log "Usage:"
-log "  1. Select text in any app."
-log "  2. Right-click → Services → Proofread Selection"
-log "     (or assign a keyboard shortcut in System Settings → Keyboard → Keyboard Shortcuts → Services)"
-log ""
 log "The service runs proofd polish on the selected text and replaces it inline."
 log "No Accessibility or Input Monitoring permissions are required."
-log ""
-log "Tip: If you don't see 'Proofread Selection' in the right-click menu,"
-log "     log out and back in (or restart) to refresh Launch Services."
-log "     The app is unsigned; macOS may ask to confirm on first launch."
-log "     Open it once via right-click → Open."
