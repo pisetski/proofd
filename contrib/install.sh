@@ -78,7 +78,16 @@ if [[ ! -d "$APP_PATH" ]]; then
 fi
 log "Installed $APP_NAME to $APP_PATH"
 
-# --- 4. Trigger Launch Services rescan ---
+# --- 4. Remove Gatekeeper quarantine ---
+log "Clearing Gatekeeper quarantine…"
+xattr -cr "$APP_PATH" 2>/dev/null || true
+
+# --- 5. Launch app once to register NSServices ---
+log "Launching proofd.app once to register services…"
+open "$APP_PATH" 2>/dev/null || true
+sleep 2
+
+# --- 6. Trigger Launch Services rescan ---
 log "Registering NSServices with Launch Services…"
 /usr/bin/lsregister -f "$APP_PATH" 2>/dev/null || true
 # Touch to force Launch Services to re-scan
@@ -121,5 +130,7 @@ log ""
 log "The service runs proofd polish on the selected text and replaces it inline."
 log "No Accessibility or Input Monitoring permissions are required."
 log ""
-log "Tip: The first time you open proofd.app, macOS may ask to confirm it's from an unidentified developer."
-log "     Open it once via right-click → Open, then the service will work."
+log "Tip: If you don't see 'Proofread Selection' in the right-click menu,"
+log "     log out and back in (or restart) to refresh Launch Services."
+log "     The app is unsigned; macOS may ask to confirm on first launch."
+log "     Open it once via right-click → Open."
