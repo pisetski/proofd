@@ -12,6 +12,8 @@
 	<string>proofd</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>proofd-service-host</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
