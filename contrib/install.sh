@@ -4,13 +4,13 @@
 # What it does:
 #   1. Builds the Rust `proofd` binary in release mode.
 #   2. Installs it to ~/.local/bin/proofd (adds to PATH if missing from shell profile).
-#   3. Builds proofd.app (Swift NSServices host) from macos/ServiceHost.swift.
-#   4. Installs proofd.app to /Applications.
+#   3. Builds proofd.app (Objective-C NSServices host) from macos/ServiceHost.m.
+#   4. Installs proofd.app to ~/Applications (or /Applications as fallback).
 #   5. Triggers Launch Services rescan so the "Proofread Selection" service appears.
 #   6. Creates ~/.config/proofd/config.toml if missing (auto-detects provider).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/<user>/proofd/main/contrib/install.sh | bash
+#   bash contrib/install.sh
 #
 # Result: select text in any app → right-click → Services → Proofread Selection.
 # No Accessibility or Input Monitoring permissions required.
@@ -69,13 +69,12 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # --- 3. Build proofd.app ---
 log "Building proofd.app…"
+# Prefer ~/Applications (user-writable, no sudo needed); fall back to /Applications
+if [[ ! -d "$HOME/Applications" ]]; then
+    mkdir -p "$HOME/Applications"
+fi
 (cd "$REPO_ROOT/macos" && bash build.sh "$HOME/Applications")
 APP_PATH="$HOME/Applications/$APP_NAME"
-if [[ ! -d "$APP_PATH" ]]; then
-    # Fall back to /Applications if ~/Applications doesn't exist
-    (cd "$REPO_ROOT/macos" && bash build.sh "/Applications")
-    APP_PATH="/Applications/$APP_NAME"
-fi
 log "Installed $APP_NAME to $APP_PATH"
 
 # --- 4. Remove Gatekeeper quarantine ---
@@ -85,16 +84,17 @@ xattr -cr "$APP_PATH" 2>/dev/null || true
 # --- 5. Launch app once to register NSServices ---
 log "Launching proofd.app once to register services…"
 open "$APP_PATH" 2>/dev/null || true
-sleep 2
+sleep 3
 
 # --- 6. Trigger Launch Services rescan ---
+LOG_REGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
 log "Registering NSServices with Launch Services…"
-/usr/bin/lsregister -f "$APP_PATH" 2>/dev/null || true
+"$LOG_REGISTER" -f "$APP_PATH" 2>/dev/null || true
 # Touch to force Launch Services to re-scan
 touch "$APP_PATH"
 log "Done. The 'Proofread Selection' service is now available."
 
-# --- 5. Create default config if missing ---
+# --- 7. Create default config if missing ---
 if [[ ! -f "$CONFIG_PATH" ]]; then
     mkdir -p "$CONFIG_DIR"
     # Auto-detect provider
