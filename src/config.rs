@@ -40,8 +40,6 @@ pub struct Config {
     pub provider_bin: Option<String>,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
-    #[serde(default = "default_hotkey")]
-    pub hotkey: String,
     #[serde(default = "default_max_input_chars")]
     pub max_input_chars: usize,
 }
@@ -52,10 +50,6 @@ fn default_model() -> String {
 
 fn default_timeout_secs() -> u64 {
     15
-}
-
-fn default_hotkey() -> String {
-    "Ctrl-Alt-P".to_string()
 }
 
 fn default_max_input_chars() -> usize {
@@ -70,7 +64,6 @@ impl Default for Config {
             base_url: None,
             provider_bin: None,
             timeout_secs: default_timeout_secs(),
-            hotkey: default_hotkey(),
             max_input_chars: default_max_input_chars(),
         }
     }
@@ -158,9 +151,6 @@ fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> 
     if cfg.timeout_secs == 0 || cfg.timeout_secs > 600 {
         return Err(invalid("`timeout_secs` must be in 1..=600"));
     }
-    if cfg.hotkey.trim().is_empty() {
-        return Err(invalid("`hotkey` must not be empty"));
-    }
     if cfg.max_input_chars == 0 {
         return Err(invalid("`max_input_chars` must be > 0"));
     }
@@ -206,7 +196,6 @@ mod tests {
         assert_eq!(cfg.provider, ProviderKind::Claude);
         assert_eq!(cfg.model, "haiku");
         assert_eq!(cfg.timeout_secs, 15);
-        assert_eq!(cfg.hotkey, "Ctrl-Alt-P");
     }
 
     #[test]
@@ -216,7 +205,6 @@ provider = "openai-compat"
 model = "llama3"
 base_url = "http://localhost:11434/v1/"
 timeout_secs = 20
-hotkey = "Ctrl-Alt-P"
 max_input_chars = 2000
 "#;
         let cfg = parse_toml(toml, "test").unwrap();

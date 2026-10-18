@@ -1,12 +1,4 @@
 pub mod config;
-pub mod daemon;
-#[cfg(target_os = "macos")]
-pub mod hotkey;
-#[cfg(target_os = "macos")]
-pub mod macos_loop;
-pub mod notify;
-pub mod platform;
-#[cfg(target_os = "macos")]
-pub mod platform_macos;
+pub mod polish;
 pub mod prompt;
 pub mod providers;

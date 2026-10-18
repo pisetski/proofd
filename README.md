@@ -1,38 +1,37 @@
 # proofd
 
-Standalone Rust daemon, macOS-first. Global `Ctrl-Option-P` polishes selected
-text, falling back to focused text box contents via simulated `Cmd+A`,
-`Cmd+C`, `Cmd+V`. Replacement is silent on success and supports native
-single `Cmd+Z` undo.
+Proofreads selected text from the macOS Services menu. Select text in any app,
+then choose Services > Proofread Selection (or assign it a keyboard shortcut in
+System Settings > Keyboard > Keyboard Shortcuts > Services). The selection is
+replaced with the revised text.
 
-- Simulated paste only. Never mutates app text with `AXSetValue`.
-- Silent success; error notification only, no sound or beep.
-- Single `Cmd+V` keeps native undo.
+No Accessibility or Input Monitoring permission is needed: the system hands the
+selection to the service and takes the result back.
 
 ## Install
 
 ```sh
-cargo install --path .
-# or
-cargo build --release
+make install
 ```
 
-## CLI subcommands
+This builds `proofd`, installs it to `~/.local/bin`, builds and registers
+`~/Applications/proofd.app` (the Services host), and creates a default config.
+Then enable "Proofread Selection" under Text in System Settings > Keyboard >
+Keyboard Shortcuts > Services.
 
-### `proofd polish`
+## CLI
 
-Reads text from stdin, polishes it, writes the result to stdout. No daemon, no hotkey, no permissions:
+`proofd polish` reads text from stdin and writes the revised text to stdout.
+Logs go to stderr. It exits non-zero on empty input or provider failure.
 
 ```sh
 echo "helo world" | proofd polish
 ```
 
-Useful as the engine behind a macOS Service, a shell alias, or an editor integration. Exits non-zero on empty input or provider failure.
+## Logs
 
-## Config
-
-Requires macOS Accessibility permission for simulated key events; macOS may
-also request Input Monitoring.
+`make logs` follows `~/Library/Logs/proofd-service.log` and the Services host's
+system log. `make test-service` runs an end-to-end check of the installed service.
 
 ## Config
 
@@ -40,23 +39,12 @@ TOML at `~/.config/proofd/config.toml` (also `$XDG_CONFIG_HOME/proofd/config.tom
 legacy macOS location `~/Library/Application Support/proofd/config.toml` still
 works as fallback, first existing file wins). See `config.example.toml`. Missing
 file means defaults, not crash; invalid file returns a clear error and
-prevents daemon start.
+makes `proofd polish` fail.
 
 Defaults: provider `claude`, model `haiku`, timeout `15`s,
-hotkey `Ctrl-Alt-P`, `max_input_chars = 12000`.
+`max_input_chars = 12000`.
 
 Optional skill override: `~/.config/proofd/proofread.md` (same lookup order).
-
-## Autostart (LaunchAgent)
-
-Edit `contrib/com.proofd.plist` if `proofd` is not at
-`~/.cargo/bin/proofd`, copy to `~/Library/LaunchAgents/com.proofd.plist`:
-
-```sh
-cp contrib/com.proofd.plist ~/Library/LaunchAgents/com.proofd.plist
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.proofd.plist
-# legacy fallback: launchctl load ~/Library/LaunchAgents/com.proofd.plist
-```
 
 ## Providers
 
@@ -72,34 +60,24 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.proofd.plist
 
 Timeout enforced by caller; empty output is an error and is never pasted.
 
-### LaunchAgent PATH pitfall (`spawn ... No such file or directory`)
+### PATH
 
-`proofd` as a LaunchAgent runs with a minimal `PATH`
-(`/usr/bin:/bin:/usr/sbin:/sbin`), so `opencode` in
-`/opt/homebrew/bin` (or `claude` in `~/.local/bin`) is invisible even
-though it works in your terminal. `proofd` now searches `PATH` plus
+The service host runs with a minimal `PATH`, so `proofd` searches `PATH` plus
 `/opt/homebrew/bin`, `/usr/local/bin`, `~/.cargo/bin`, `~/.local/bin`,
-`~/.opencode/bin`, `~/.bun/bin`, and reports the searched `PATH` when
-missing. Pick one fix:
+`~/.opencode/bin`, `~/.bun/bin` for the provider CLI and reports the searched
+`PATH` when it is missing. If yours lives elsewhere, set `provider_bin`:
 
 ```toml
-# ~/.config/proofd/config.toml — most robust
 provider = "opencode"
 model = "opencode/mimo-v2.6-flash-free"
 provider_bin = "/opt/homebrew/bin/opencode"
 ```
 
-or add a `PATH` to `~/Library/LaunchAgents/com.proofd.plist` (see
-`contrib/com.proofd.plist`), then
-`launchctl bootout gui/$UID/com.proofd; launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.proofd.plist`.
-
 ## Limitations
 
-- Plaintext clipboard MVP only; rich clipboard contents may not be preserved.
-- Fallback `Cmd+A` depends on focused text-field behavior; aborts above
-  `max_input_chars`.
-- Paste aborts if front app PID changed between trigger and paste.
-- Linux: unsupported-platform error (MVP is macOS-only).
+- macOS only.
+- Plain text only; rich text formatting in the selection is not preserved.
+- Selections above `max_input_chars` are refused.
 
 ## QA
 
@@ -110,10 +88,7 @@ cargo test
 cargo build --release
 ```
 
-Manual matrix: TextEdit, Telegram, Slack, Teams; selected replacement,
-no-selection fallback, multiline, Markdown/code block, ~2k chars,
-offline failure keeps original, plaintext clipboard restored, single
-`Cmd+Z` restores original, focus change aborts, success silent, error notifies.
+Then `make test-service` against an installed build.
 
 ## License
 

@@ -2,7 +2,7 @@
 # Copy to ~/.config/proofd/config.toml and edit.
 # Lookup order: $XDG_CONFIG_HOME/proofd/config.toml, ~/.config/proofd/config.toml,
 # then the platform-native dir (~/Library/Application Support/proofd/config.toml on macOS).
-# Missing file means built-in defaults; invalid file prevents daemon start.
+# Missing file means built-in defaults; invalid file makes `proofd polish` fail.
 
 # Provider backend: "claude" | "opencode" | "openai-compat"
 # - claude: shells out to `claude -p --model <model> --output-format text`, prompt via stdin.
@@ -19,8 +19,8 @@ model = "haiku"
 
 # Optional absolute path to the provider CLI. Unset means PATH lookup plus
 # common macOS locations (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin,
-# ~/.cargo/bin, ~/.opencode/bin, ...). You NEED this (or a LaunchAgent PATH)
-# when running as a LaunchAgent, whose default PATH lacks Homebrew.
+# ~/.cargo/bin, ~/.opencode/bin, ...). Set it if your CLI lives elsewhere: the
+# service host runs with a minimal PATH that lacks Homebrew.
 # Examples:
 # provider_bin = "/opt/homebrew/bin/opencode"
 # provider_bin = "/Users/YOU/.local/bin/claude"
@@ -32,10 +32,5 @@ model = "haiku"
 # Provider call timeout in seconds. Caller enforces via tokio::time::timeout.
 timeout_secs = 15
 
-# Global hotkey. MVP supports Ctrl-Alt-P-style combos mapping to CONTROL | ALT + KeyP.
-# Examples: "Ctrl-Alt-P", "Ctrl-Option-P".
-hotkey = "Ctrl-Alt-P"
-
-# Safety cap: abort paste if copied text exceeds this many chars.
-# Protects against Cmd+A fallback selecting more than intended.
+# Safety cap: refuse selections longer than this many chars.
 max_input_chars = 12000

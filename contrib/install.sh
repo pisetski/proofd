@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# proofd installer — one-command setup for Option A (macOS Services, zero permissions).
+# proofd installer — one-command setup of the macOS "Proofread Selection" service.
 #
 # What it does:
 #   1. Builds the Rust `proofd` binary in release mode.
@@ -17,8 +17,7 @@
 
 set -euo pipefail
 
-# Kill any old proofd daemon processes (event tap version) that may still be running
-pkill -f "target/release/proofd$" 2>/dev/null || true
+# Stop a running service host so the rebuilt app is the one that registers
 pkill -f "proofd-service-host" 2>/dev/null || true
 sleep 1
 
@@ -98,18 +97,6 @@ log "Registering NSServices with Launch Services…"
 # Touch to force Launch Services to re-scan
 touch "$APP_PATH"
 log "Done. The 'Proofread Selection' service is now registered."
-
-log ""
-log "IMPORTANT — final steps to make the service appear:"
-log "  1. In Finder, right-click ~/Applications/proofd.app → Open (to bypass Gatekeeper)"
-log "  2. Open System Settings → Keyboard → Keyboard Shortcuts → Services"
-log "  3. Find 'Proofread Selection' under Text and make sure it's checked"
-log "  4. (Optional) Assign a keyboard shortcut to 'Proofread Selection'"
-log ""
-log "If something goes wrong, check the service log:"
-log "  tail -f ~/Library/Logs/proofd-service.log"
-log ""
-log "Then select text in any app → right-click → Services → Proofread Selection."
 
 # --- 7. Create default config if missing ---
 if [[ ! -f "$CONFIG_PATH" ]]; then

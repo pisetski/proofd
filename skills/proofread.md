@@ -14,5 +14,5 @@ Rules:
 - Output only the polished text itself. No explanations, no analysis
   sections, no quotes around the answer, no extra bullets.
 
-The daemon appends hard revised-only constraints at call time; this file
+proofd appends hard revised-only constraints at call time; this file
 provides the base instruction set.
