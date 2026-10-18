@@ -60,9 +60,14 @@ static void logMsg(NSString *fmt, ...) {
     [[inputPipe fileHandleForWriting] writeData:textData];
     [[inputPipe fileHandleForWriting] closeFile];
 
+    NSStatusItem *busyIndicator = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+    busyIndicator.button.image = [NSImage imageWithSystemSymbolName:@"text.magnifyingglass"
+                                           accessibilityDescription:@"Proofreading"];
+
     NSDate *started = [NSDate date];
     [task launch];
     [task waitUntilExit];
+    [[NSStatusBar systemStatusBar] removeStatusItem:busyIndicator];
     logMsg(@"proofd exited %ld after %.0fms", (long)[task terminationStatus], -[started timeIntervalSinceNow] * 1000);
 
     NSData *errData = [[errorPipe fileHandleForReading] readDataToEndOfFile];
@@ -111,7 +116,7 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSApplication *app = [NSApplication sharedApplication];
         [app setDelegate:[[AppDelegate alloc] init]];
-        [app setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [app run];
     }
     return 0;
