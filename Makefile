@@ -10,7 +10,7 @@ SERVICE_LOG := $(HOME)/Library/Logs/proofd-service.log
 SERVICE_LOG_PREDICATE := process == "proofd-service-host" AND (messageType == error OR messageType == fault OR (sender == "AppKit" AND NOT category IN {"Appearance", "AutomaticTermination", "StateRestoration"}))
 
 .NOTPARALLEL:
-.PHONY: build install unload load restart reinstall logs clear-logs
+.PHONY: build install unload load restart reinstall logs clear-logs test-service
 
 build:
 	cargo build --release
@@ -41,3 +41,7 @@ logs:
 	@/usr/bin/log stream --style compact --predicate '$(SERVICE_LOG_PREDICATE)' & \
 	LOG_PID=$$!; trap 'kill $$LOG_PID 2>/dev/null' EXIT; \
 	tail -F $(LOG_ERR) $(LOG_OUT) $(SERVICE_LOG)
+
+# End-to-end check of the installed Services menu item; needs a GUI session and a working provider.
+test-service:
+	bash macos/test-service.sh
