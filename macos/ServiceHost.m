@@ -39,13 +39,12 @@ static void logMsg(NSString *fmt, ...) {
     }
     logMsg(@"Got text: %@", [text substringToIndex:MIN(text.length, 50)]);
 
-    NSString *proofdPath = [self findProofd];
+    NSString *proofdPath = [[NSBundle mainBundle] pathForAuxiliaryExecutable:@"proofd"];
     if (!proofdPath) {
-        logMsg(@"proofd binary not found");
-        if (error) *error = @"proofd binary not found";
+        logMsg(@"proofd binary missing from %@", [[NSBundle mainBundle] bundlePath]);
+        if (error) *error = @"proofd binary missing from proofd.app; reinstall it";
         return;
     }
-    logMsg(@"Using proofd at: %@", proofdPath);
 
     NSPipe *inputPipe = [NSPipe pipe];
     NSPipe *outputPipe = [NSPipe pipe];
@@ -93,44 +92,6 @@ static void logMsg(NSString *fmt, ...) {
     [pasteboard clearContents];
     [pasteboard setString:result forType:NSPasteboardTypeString];
     logMsg(@"Wrote result back to pasteboard");
-}
-
-- (NSString *)findProofd {
-    NSString *home = getenv("HOME") ? @(getenv("HOME")) : @"";
-    NSArray *candidates = @[
-        @"/opt/homebrew/bin/proofd",
-        @"/usr/local/bin/proofd",
-        [home stringByAppendingPathComponent:@".cargo/bin/proofd"],
-        [home stringByAppendingPathComponent:@".local/bin/proofd"],
-        [home stringByAppendingPathComponent:@".bin/proofd"],
-    ];
-    for (NSString *path in candidates) {
-        if ([[NSFileManager defaultManager] isExecutableFileAtPath:path]) {
-            logMsg(@"Found proofd at: %@", path);
-            return path;
-        }
-    }
-
-    // Fall back to PATH
-    NSTask *whichTask = [[NSTask alloc] init];
-    [whichTask setLaunchPath:@"/usr/bin/which"];
-    [whichTask setArguments:@[@"proofd"]];
-    NSPipe *pipe = [NSPipe pipe];
-    [whichTask setStandardOutput:pipe];
-    [whichTask setStandardError:nil];
-    [whichTask launch];
-    [whichTask waitUntilExit];
-    NSData *data = [[pipe fileHandleForReading] readDataToEndOfFile];
-    NSString *path = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    if (path) {
-        path = [path stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (path.length > 0) {
-            logMsg(@"Found proofd via PATH: %@", path);
-            return path;
-        }
-    }
-    logMsg(@"proofd not found anywhere");
-    return nil;
 }
 
 @end

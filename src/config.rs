@@ -56,6 +56,23 @@ fn default_max_input_chars() -> usize {
     12_000
 }
 
+impl Config {
+    fn without_file(is_installed: impl Fn(&str) -> bool) -> Self {
+        if !is_installed("claude") && is_installed("opencode") {
+            return Self {
+                provider: ProviderKind::Opencode,
+                model: "opencode/mimo-v2.6-flash-free".to_string(),
+                ..Self::default()
+            };
+        }
+        Self::default()
+    }
+}
+
+fn cli_installed(name: &str) -> bool {
+    crate::providers::resolve_cli(None, name).is_ok()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -118,12 +135,9 @@ pub fn config_path() -> Option<PathBuf> {
 
 pub fn load_from_path(path: Option<PathBuf>) -> Result<Config, ConfigError> {
     let path = path.or_else(config_path);
-    let Some(path) = path else {
-        return Ok(Config::default());
+    let Some(path) = path.filter(|p| p.exists()) else {
+        return Ok(Config::without_file(cli_installed));
     };
-    if !path.exists() {
-        return Ok(Config::default());
-    }
     let contents = std::fs::read_to_string(&path).map_err(|e| ConfigError::Io {
         path: path.display().to_string(),
         source: e,
@@ -192,10 +206,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("config.toml");
         let cfg = load_from_path(Some(missing)).unwrap();
-        assert_eq!(cfg, Config::default());
+        assert_eq!(cfg, Config::without_file(cli_installed));
+        assert_eq!(cfg.timeout_secs, 15);
+    }
+
+    #[test]
+    fn without_file_prefers_claude() {
+        let cfg = Config::without_file(|_| true);
         assert_eq!(cfg.provider, ProviderKind::Claude);
         assert_eq!(cfg.model, "haiku");
-        assert_eq!(cfg.timeout_secs, 15);
+        assert_eq!(Config::without_file(|_| false), Config::default());
+    }
+
+    #[test]
+    fn without_file_falls_back_to_opencode_when_only_it_is_installed() {
+        let cfg = Config::without_file(|name| name == "opencode");
+        assert_eq!(cfg.provider, ProviderKind::Opencode);
+        assert_eq!(cfg.model, "opencode/mimo-v2.6-flash-free");
     }
 
     #[test]

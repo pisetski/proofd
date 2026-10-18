@@ -123,3 +123,14 @@ fn bundle_executable_matches_build_output() {
     );
     assert_eq!(string(&plist, "CFBundlePackageType"), "APPL");
 }
+
+#[test]
+fn service_host_runs_the_bundled_cli() {
+    let build = read("macos/build.sh");
+    let source = read("macos/ServiceHost.m");
+    let looked_up = objc_string_after(&source, "pathForAuxiliaryExecutable:");
+    assert!(
+        build.contains(&format!("\"$BIN_DIR/{looked_up}\"")),
+        "build.sh must copy the CLI to Contents/MacOS/{looked_up}, where ServiceHost.m looks for it"
+    );
+}

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # End-to-end smoke test for the installed "Proofread Selection" service.
-# Needs a logged-in GUI session, an installed app (bash contrib/install.sh) and a
+# Needs a logged-in GUI session, an installed app (make install) and a
 # working provider in ~/.config/proofd/config.toml, so it is not part of CI.
 
 APP_PATH="${APP_PATH:-$HOME/Applications/proofd.app}"
@@ -20,7 +20,7 @@ fail() {
     exit 1
 }
 
-[[ -d "$APP_PATH" ]] || fail "$APP_PATH not installed; run: bash contrib/install.sh"
+[[ -d "$APP_PATH" ]] || fail "$APP_PATH not installed; run: make install"
 pass "app installed at $APP_PATH"
 
 # Registration: pbs must route the menu item to this bundle with the plist's selector.

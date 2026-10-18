@@ -1,55 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds proofd.app (Objective-C NSServices host) from macos/ServiceHost.m.
+# Builds the self-contained proofd.app: the Objective-C NSServices host plus the
+# Rust proofd binary it runs, both in Contents/MacOS.
 # Output: proofd.app (in current dir or $1)
 
 APP_NAME="proofd.app"
 OUT_DIR="${1:-.}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OBJC_SRC="$SCRIPT_DIR/ServiceHost.m"
-INFO_PLIST="$SCRIPT_DIR/Info.plist"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-if [[ ! -f "$OBJC_SRC" ]]; then
-    echo "error: $OBJC_SRC not found" >&2
-    exit 1
-fi
-if [[ ! -f "$INFO_PLIST" ]]; then
-    echo "error: $INFO_PLIST not found" >&2
-    exit 1
-fi
+(cd "$REPO_ROOT" && cargo build --release --bin proofd)
 
 TMPDIR="$(mktemp -d /tmp/proofd-build.XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-BIN_DIR="$TMPDIR/$APP_NAME/Contents/MacOS"
-RES_DIR="$TMPDIR/$APP_NAME/Contents/Resources"
-mkdir -p "$BIN_DIR" "$RES_DIR"
+APP="$TMPDIR/$APP_NAME"
+BIN_DIR="$APP/Contents/MacOS"
+mkdir -p "$BIN_DIR"
 
-# Compile the Objective-C service host
-clang "$OBJC_SRC" \
+clang "$SCRIPT_DIR/ServiceHost.m" \
     -o "$BIN_DIR/proofd-service-host" \
     -framework AppKit \
     -framework Foundation \
     -fobjc-arc \
-    -target arm64-apple-macosx14.0
+    -mmacosx-version-min=14.0
+cp "$REPO_ROOT/target/release/proofd" "$BIN_DIR/proofd"
+cp "$SCRIPT_DIR/Info.plist" "$APP/Contents/Info.plist"
 
-chmod +x "$BIN_DIR/proofd-service-host"
+codesign --sign - --force "$BIN_DIR/proofd"
+codesign --sign - --force "$APP"
 
-# Ad-hoc codesign so Gatekeeper doesn't block the service host
-codesign --sign - --force "$BIN_DIR/proofd-service-host" 2>/dev/null || true
-codesign --sign - --force "$TMPDIR/$APP_NAME" 2>/dev/null || true
-
-# Copy Info.plist
-cp "$INFO_PLIST" "$TMPDIR/$APP_NAME/Contents/Info.plist"
-
-# Move to output
 mkdir -p "$OUT_DIR"
 DEST="$OUT_DIR/$APP_NAME"
-if [[ -e "$DEST" ]]; then
-    rm -rf "$DEST"
-fi
-mv "$TMPDIR/$APP_NAME" "$DEST"
+rm -rf "$DEST"
+mv "$APP" "$DEST"
 
 echo "Built $DEST"

@@ -10,14 +10,19 @@ selection to the service and takes the result back.
 
 ## Install
 
+Needs Xcode Command Line Tools and Rust.
+
 ```sh
 make install
 ```
 
-This builds `proofd`, installs it to `~/.local/bin`, builds and registers
-`~/Applications/proofd.app` (the Services host), and creates a default config.
-Then enable "Proofread Selection" under Text in System Settings > Keyboard >
-Keyboard Shortcuts > Services.
+This builds `~/Applications/proofd.app`, links its `proofd` CLI into
+`~/.local/bin` and registers the service. On first install, System Settings
+opens at Keyboard; enable "Proofread Selection" under Text in Keyboard
+Shortcuts > Services. Re-run to update; `make uninstall` removes it.
+
+No config is needed: without one, proofd uses `claude`, or `opencode` when
+only that is installed.
 
 ## CLI
 
@@ -38,7 +43,7 @@ system log. `make test-service` runs an end-to-end check of the installed servic
 TOML at `~/.config/proofd/config.toml` (also `$XDG_CONFIG_HOME/proofd/config.toml`;
 legacy macOS location `~/Library/Application Support/proofd/config.toml` still
 works as fallback, first existing file wins). See `config.example.toml`. Missing
-file means defaults, not crash; invalid file returns a clear error and
+file means defaults (see Install), not crash; invalid file returns a clear error and
 makes `proofd polish` fail.
 
 Defaults: provider `claude`, model `haiku`, timeout `15`s,

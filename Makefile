@@ -1,13 +1,25 @@
 SERVICE_LOG := $(HOME)/Library/Logs/proofd-service.log
 SERVICE_LOG_PREDICATE := process == "proofd-service-host" AND (messageType == error OR messageType == fault OR (sender == "AppKit" AND NOT category IN {"Appearance", "AutomaticTermination", "StateRestoration"}))
 
-.PHONY: build install logs clear-logs test-service
+APP_PATH := $(HOME)/Applications/proofd.app
+CLI_LINK := $(HOME)/.local/bin/proofd
+LSREGISTER := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+.PHONY: build install uninstall logs clear-logs test-service
 
 build:
 	cargo build --release
 
 install:
 	bash contrib/install.sh
+
+# Config and logs stay; remove ~/.config/proofd and $(SERVICE_LOG) by hand if wanted.
+uninstall:
+	pkill -f "$(APP_PATH)/Contents/MacOS/proofd-service-host" || true
+	"$(LSREGISTER)" -u "$(APP_PATH)" || true
+	rm -rf "$(APP_PATH)"
+	[ ! -L "$(CLI_LINK)" ] || rm "$(CLI_LINK)"
+	/System/Library/CoreServices/pbs -update
 
 clear-logs:
 	: > $(SERVICE_LOG)
