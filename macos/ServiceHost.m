@@ -62,14 +62,19 @@ static void logMsg(NSString *fmt, ...) {
     [[inputPipe fileHandleForWriting] writeData:textData];
     [[inputPipe fileHandleForWriting] closeFile];
 
+    NSDate *started = [NSDate date];
     [task launch];
     [task waitUntilExit];
+    logMsg(@"proofd exited %ld after %.0fms", (long)[task terminationStatus], -[started timeIntervalSinceNow] * 1000);
+
+    NSData *errData = [[errorPipe fileHandleForReading] readDataToEndOfFile];
+    NSString *errMsg = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
+    if (errMsg.length > 0) {
+        logMsg(@"proofd stderr:\n%@", errMsg);
+    }
 
     if ([task terminationStatus] != 0) {
-        NSData *errData = [[errorPipe fileHandleForReading] readDataToEndOfFile];
-        NSString *errMsg = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
         if (!errMsg || errMsg.length == 0) errMsg = @"unknown error";
-        logMsg(@"proofd failed (exit %ld): %@", (long)[task terminationStatus], errMsg);
         if (error) {
             *error = [NSString stringWithFormat:@"proofd failed (exit %ld): %@", (long)[task terminationStatus], errMsg];
         }

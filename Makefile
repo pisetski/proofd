@@ -6,6 +6,8 @@ LABEL := com.proofd
 PLIST := $(HOME)/Library/LaunchAgents/$(LABEL).plist
 LOG_OUT := /tmp/proofd.out.log
 LOG_ERR := /tmp/proofd.err.log
+SERVICE_LOG := $(HOME)/Library/Logs/proofd-service.log
+SERVICE_LOG_PREDICATE := process == "proofd-service-host" AND (messageType == error OR messageType == fault OR (sender == "AppKit" AND NOT category IN {"Appearance", "AutomaticTermination", "StateRestoration"}))
 
 .NOTPARALLEL:
 .PHONY: build install unload load restart reinstall logs clear-logs
@@ -26,10 +28,16 @@ load:
 clear-logs:
 	: > $(LOG_OUT)
 	: > $(LOG_ERR)
+	: > $(SERVICE_LOG)
 
 restart: unload clear-logs load
 
 reinstall: install restart
 
+# Daemon logs, Services host log, and AppKit's own messages for the Services
+# host (e.g. "Cannot find service provider"), which only reach the system log.
 logs:
-	tail -f $(LOG_ERR) $(LOG_OUT)
+	@touch $(LOG_OUT) $(LOG_ERR) $(SERVICE_LOG)
+	@/usr/bin/log stream --style compact --predicate '$(SERVICE_LOG_PREDICATE)' & \
+	LOG_PID=$$!; trap 'kill $$LOG_PID 2>/dev/null' EXIT; \
+	tail -F $(LOG_ERR) $(LOG_OUT) $(SERVICE_LOG)

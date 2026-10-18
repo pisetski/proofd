@@ -1,13 +1,17 @@
 use proofd_lib::config;
 use proofd_lib::daemon::polish_text;
 use proofd_lib::providers::from_config;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use tracing::info;
 
 // current_thread keeps the macOS event loop on the main thread, where the main CFRunLoop spins.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
+    // stderr, not stdout: `proofd polish` writes the revised text to stdout.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -67,10 +71,27 @@ async fn run_polish() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
 
+    info!(
+        "polish start (provider={} model={} config={} input={} chars)",
+        cfg.provider,
+        cfg.model,
+        config_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string()),
+        input.chars().count()
+    );
+
     let provider = from_config(&cfg);
+    let started = std::time::Instant::now();
 
     match polish_text(&input, &cfg, &provider).await {
         Ok(revised) => {
+            info!(
+                "polish ok ({} chars) in {}ms",
+                revised.chars().count(),
+                started.elapsed().as_millis()
+            );
             print!("{revised}");
             Ok(())
         }
