@@ -28,6 +28,7 @@ impl Provider for ClaudeCli {
             "claude",
             self.bin.as_deref(),
             &args,
+            &CLAUDE_ENV,
             user,
             cli_sandbox_dir().as_deref(),
         )
@@ -51,6 +52,7 @@ impl Provider for OpencodeCli {
             "opencode",
             self.bin.as_deref(),
             &args,
+            &[],
             &prompt,
             sandbox.as_deref(),
         )
@@ -58,6 +60,9 @@ impl Provider for OpencodeCli {
         sanitize_output(&strip_session_headers(&stdout))
     }
 }
+
+// Telemetry, update checks, and feature-flag fetches added ~1.5s to every claude startup.
+const CLAUDE_ENV: [(&str, &str); 1] = [("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")];
 
 fn claude_args(model: &str, system: &str) -> Vec<String> {
     [
@@ -83,6 +88,7 @@ async fn run_cli(
     name: &str,
     explicit_bin: Option<&str>,
     args: &[String],
+    env: &[(&str, &str)],
     stdin_text: &str,
     cwd: Option<&Path>,
 ) -> Result<String, ProviderError> {
@@ -92,6 +98,7 @@ async fn run_cli(
     let mut command = Command::new(&bin);
     command
         .args(args)
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
