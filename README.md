@@ -1,5 +1,3 @@
-# proofd
-
 A macOS service that proofreads selected text in place using an LLM CLI.
 
 ![Selected text corrected in place](docs/demo.gif)
