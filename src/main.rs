@@ -3,6 +3,7 @@ use proofd_lib::proofread::proofread_text;
 use proofd_lib::providers::from_config;
 use std::io::{IsTerminal, Read};
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 const USAGE: &str = "usage: proofd   (reads text on stdin, writes revised text to stdout)";
 
@@ -10,6 +11,9 @@ const USAGE: &str = "usage: proofd   (reads text on stdin, writes revised text t
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // stderr, not stdout: stdout carries the revised text and nothing else.
     tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .with_writer(std::io::stderr)
         .with_ansi(std::io::stderr().is_terminal())
         .init();
