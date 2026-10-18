@@ -1,4 +1,4 @@
-// `proofd polish` is the engine behind the macOS Service: the host pastes back
+// `proofd` is the engine behind the macOS Service: the host pastes back
 // whatever it prints on stdout, so stdout must carry the revised text and nothing else.
 
 #![cfg(unix)]
@@ -38,9 +38,8 @@ impl Sandbox {
         self.dir.path().join(rel)
     }
 
-    fn polish(&self, input: &str) -> Output {
+    fn proofread(&self, input: &str) -> Output {
         let mut child = Command::new(env!("CARGO_BIN_EXE_proofd"))
-            .arg("polish")
             .env("HOME", self.dir.path())
             .env("XDG_CONFIG_HOME", self.path("xdg"))
             .current_dir(self.dir.path())
@@ -64,11 +63,11 @@ fn text(bytes: &[u8]) -> String {
 }
 
 #[test]
-fn polish_passes_input_to_provider_and_prints_only_revised_text() {
+fn passes_input_to_provider_and_prints_only_revised_text() {
     let sandbox =
         Sandbox::with_provider_script("cat > \"$HOME/stdin.txt\"\necho 'This is a sentence.'");
 
-    let out = sandbox.polish("this are a sentense");
+    let out = sandbox.proofread("this are a sentense");
 
     assert!(out.status.success(), "stderr: {}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "This is a sentence.");
@@ -80,14 +79,14 @@ fn polish_passes_input_to_provider_and_prints_only_revised_text() {
 }
 
 #[test]
-fn polish_logs_go_to_stderr_not_stdout() {
+fn logs_go_to_stderr_not_stdout() {
     let sandbox = Sandbox::with_provider_script("cat >/dev/null\necho 'Fixed.'");
 
-    let out = sandbox.polish("fixd");
+    let out = sandbox.proofread("fixd");
 
     let stderr = text(&out.stderr);
-    assert!(stderr.contains("polish start"), "stderr: {stderr}");
-    assert!(stderr.contains("polish ok"), "stderr: {stderr}");
+    assert!(stderr.contains("proofread start"), "stderr: {stderr}");
+    assert!(stderr.contains("proofread ok"), "stderr: {stderr}");
     assert!(
         !stderr.contains('\u{1b}'),
         "ANSI escapes in non-terminal stderr: {stderr:?}"
@@ -96,10 +95,10 @@ fn polish_logs_go_to_stderr_not_stdout() {
 }
 
 #[test]
-fn polish_provider_failure_exits_nonzero_with_empty_stdout() {
+fn provider_failure_exits_nonzero_with_empty_stdout() {
     let sandbox = Sandbox::with_provider_script("cat >/dev/null\necho 'key expired' >&2\nexit 1");
 
-    let out = sandbox.polish("some text");
+    let out = sandbox.proofread("some text");
 
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(text(&out.stdout), "", "nothing may be pasted on failure");
@@ -111,22 +110,44 @@ fn polish_provider_failure_exits_nonzero_with_empty_stdout() {
 }
 
 #[test]
-fn polish_empty_output_from_provider_is_an_error() {
+fn empty_output_from_provider_is_an_error() {
     let sandbox = Sandbox::with_provider_script("cat >/dev/null\necho '   '");
 
-    let out = sandbox.polish("some text");
+    let out = sandbox.proofread("some text");
 
     assert!(!out.status.success());
     assert_eq!(text(&out.stdout), "");
 }
 
 #[test]
-fn polish_rejects_blank_input_without_calling_provider() {
+fn rejects_blank_input_without_calling_provider() {
     let sandbox = Sandbox::with_provider_script("touch \"$HOME/called\"");
 
-    let out = sandbox.polish("  \n ");
+    let out = sandbox.proofread("  \n ");
 
     assert!(!out.status.success());
     assert_eq!(text(&out.stdout), "");
     assert!(!sandbox.path("called").exists());
+}
+
+#[test]
+fn unknown_argument_prints_usage_and_exits_2() {
+    let out = Command::new(env!("CARGO_BIN_EXE_proofd"))
+        .arg("bogus")
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out.stderr).contains("usage: proofd"));
+}
+
+#[test]
+fn version_flag_prints_version() {
+    let out = Command::new(env!("CARGO_BIN_EXE_proofd"))
+        .arg("--version")
+        .output()
+        .unwrap();
+
+    assert!(out.status.success());
+    assert!(text(&out.stdout).starts_with("proofd "));
 }

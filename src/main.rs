@@ -4,7 +4,7 @@ use proofd_lib::providers::from_config;
 use std::io::{IsTerminal, Read};
 use tracing::info;
 
-const USAGE: &str = "usage: proofd polish   (reads text on stdin, writes revised text to stdout)";
+const USAGE: &str = "usage: proofd   (reads text on stdin, writes revised text to stdout)";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,7 +15,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     match std::env::args().nth(1).as_deref() {
-        Some("polish") => run_polish().await,
+        None if !std::io::stdin().is_terminal() => proofread().await,
+        Some("-h" | "--help") => {
+            println!("{USAGE}");
+            Ok(())
+        }
+        Some("-V" | "--version") => {
+            println!("proofd {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);
@@ -23,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn run_polish() -> Result<(), Box<dyn std::error::Error>> {
+async fn proofread() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = config::config_path();
     let cfg = config::load_from_path(config_path.clone()).map_err(|e| {
         eprintln!("proofd: {e}");
@@ -34,7 +42,7 @@ async fn run_polish() -> Result<(), Box<dyn std::error::Error>> {
     std::io::stdin().read_to_string(&mut input)?;
 
     info!(
-        "polish start (provider={} model={} config={} input={} chars)",
+        "proofread start (provider={} model={} config={} input={} chars)",
         cfg.provider,
         cfg.model,
         config_path
@@ -50,7 +58,7 @@ async fn run_polish() -> Result<(), Box<dyn std::error::Error>> {
     match polish_text(&input, &cfg, &provider).await {
         Ok(revised) => {
             info!(
-                "polish ok ({} chars) in {}ms",
+                "proofread ok ({} chars) in {}ms",
                 revised.chars().count(),
                 started.elapsed().as_millis()
             );

@@ -52,8 +52,7 @@ static void logMsg(NSString *fmt, ...) {
 
     NSTask *task = [[NSTask alloc] init];
     [task setLaunchPath:proofdPath];
-    [task setArguments:@[@"polish"]];
-    [task setStandardInput:inputPipe];
+        [task setStandardInput:inputPipe];
     [task setStandardOutput:outputPipe];
     [task setStandardError:errorPipe];
 

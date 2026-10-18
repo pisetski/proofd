@@ -13,12 +13,16 @@ Selected text is sent to your configured provider.
 
 ## Install
 
-Requires Xcode Command Line Tools, Rust, and `claude` or `opencode`.
+Requires Xcode Command Line Tools, [Rust](https://rustup.rs) 1.75 or newer, and
+`claude` or `opencode`.
 
 ```sh
 git clone https://github.com/pisetski/proofd && cd proofd
 make install
 ```
+
+This installs `proofd.app` to `~/Applications` and links the `proofd` command
+into `~/.local/bin`, which must be on your `PATH` to use it from the terminal.
 
 Then enable **Proofread Selection** in System Settings › Keyboard › Keyboard
 Shortcuts › Services › Text, and assign your shortcut.
@@ -26,14 +30,20 @@ Shortcuts › Services › Text, and assign your shortcut.
 ## Terminal
 
 ```sh
-echo "helo world" | proofd polish
+echo "helo world" | proofd
 ```
 
 ## Configure
 
-Optional. Copy `config.example.toml` to `~/.config/proofd/config.toml` to
-change the provider (`claude`, `opencode`, or a local OpenAI-compatible server),
-model, or timeout. To change the prompt, copy `skills/proofread.md` to
+Optional. To change the provider (`claude`, `opencode`, or a local
+OpenAI-compatible server), model, or timeout:
+
+```sh
+mkdir -p ~/.config/proofd
+cp config.example.toml ~/.config/proofd/config.toml
+```
+
+To change the prompt, copy `skills/proofread.md` to
 `~/.config/proofd/proofread.md` and edit it.
 
 ## Uninstall
