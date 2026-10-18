@@ -5,8 +5,8 @@ use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum PolishError {
-    #[error("no text to polish")]
+pub enum ProofreadError {
+    #[error("no text to proofread")]
     NoText,
     #[error("input too large ({0} chars > max {1})")]
     TooLarge(usize, usize),
@@ -16,26 +16,29 @@ pub enum PolishError {
     Provider(String),
 }
 
-pub async fn polish_text<P: Provider>(
+pub async fn proofread_text<P: Provider>(
     input: &str,
     config: &Config,
     provider: &P,
-) -> Result<String, PolishError> {
+) -> Result<String, ProofreadError> {
     if input.trim().is_empty() {
-        return Err(PolishError::NoText);
+        return Err(ProofreadError::NoText);
     }
     let input_chars = input.chars().count();
     if input_chars > config.max_input_chars {
-        return Err(PolishError::TooLarge(input_chars, config.max_input_chars));
+        return Err(ProofreadError::TooLarge(
+            input_chars,
+            config.max_input_chars,
+        ));
     }
 
     let (system, user) = build_revised_only(input);
     let timeout = Duration::from_secs(config.timeout_secs);
     let revised = complete_with_timeout(provider, &system, &user, timeout)
         .await
-        .map_err(|e| PolishError::Provider(e.to_string()))?;
+        .map_err(|e| ProofreadError::Provider(e.to_string()))?;
     if revised.trim().is_empty() {
-        return Err(PolishError::EmptyOutput);
+        return Err(ProofreadError::EmptyOutput);
     }
     Ok(revised)
 }
@@ -71,7 +74,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_revised_text() {
-        let revised = polish_text("helo", &test_config(), &EchoProvider("hello".into()))
+        let revised = proofread_text("helo", &test_config(), &EchoProvider("hello".into()))
             .await
             .unwrap();
         assert_eq!(revised, "hello");
@@ -79,40 +82,43 @@ mod tests {
 
     #[tokio::test]
     async fn blank_input_never_reaches_provider() {
-        let err = polish_text(" \n", &test_config(), &FailProvider)
+        let err = proofread_text(" \n", &test_config(), &FailProvider)
             .await
             .unwrap_err();
-        assert!(matches!(err, PolishError::NoText), "got: {err}");
+        assert!(matches!(err, ProofreadError::NoText), "got: {err}");
     }
 
     #[tokio::test]
     async fn oversized_input_aborts_before_provider() {
-        let err = polish_text(&"x".repeat(101), &test_config(), &FailProvider)
+        let err = proofread_text(&"x".repeat(101), &test_config(), &FailProvider)
             .await
             .unwrap_err();
-        assert!(matches!(err, PolishError::TooLarge(101, 100)), "got: {err}");
+        assert!(
+            matches!(err, ProofreadError::TooLarge(101, 100)),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
     async fn input_limit_counts_chars_not_bytes() {
-        polish_text(&"é".repeat(100), &test_config(), &EchoProvider("ok".into()))
+        proofread_text(&"é".repeat(100), &test_config(), &EchoProvider("ok".into()))
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn provider_failure_is_an_error() {
-        let err = polish_text("text", &test_config(), &FailProvider)
+        let err = proofread_text("text", &test_config(), &FailProvider)
             .await
             .unwrap_err();
-        assert!(matches!(err, PolishError::Provider(_)), "got: {err}");
+        assert!(matches!(err, ProofreadError::Provider(_)), "got: {err}");
     }
 
     #[tokio::test]
     async fn blank_provider_output_is_an_error() {
-        let err = polish_text("text", &test_config(), &EchoProvider("  \n".into()))
+        let err = proofread_text("text", &test_config(), &EchoProvider("  \n".into()))
             .await
             .unwrap_err();
-        assert!(matches!(err, PolishError::EmptyOutput), "got: {err}");
+        assert!(matches!(err, ProofreadError::EmptyOutput), "got: {err}");
     }
 }

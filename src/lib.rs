@@ -1,4 +1,4 @@
 pub mod config;
-pub mod polish;
 pub mod prompt;
+pub mod proofread;
 pub mod providers;

@@ -1,5 +1,5 @@
 use proofd_lib::config;
-use proofd_lib::polish::polish_text;
+use proofd_lib::proofread::proofread_text;
 use proofd_lib::providers::from_config;
 use std::io::{IsTerminal, Read};
 use tracing::info;
@@ -55,7 +55,7 @@ async fn proofread() -> Result<(), Box<dyn std::error::Error>> {
     let provider = from_config(&cfg);
     let started = std::time::Instant::now();
 
-    match polish_text(&input, &cfg, &provider).await {
+    match proofread_text(&input, &cfg, &provider).await {
         Ok(revised) => {
             info!(
                 "proofread ok ({} chars) in {}ms",
