@@ -1,7 +1,7 @@
 use super::ProviderError;
 use std::path::Path;
 
-// LaunchAgents run with a minimal PATH, so bare names miss Homebrew and ~/.local/bin installs.
+// The Services host runs with a minimal PATH, so bare names miss Homebrew and ~/.local/bin installs.
 pub fn resolve_cli(explicit: Option<&str>, name: &str) -> Result<String, ProviderError> {
     if let Some(configured) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
         return resolve_configured(&expand_tilde(configured));
@@ -12,8 +12,7 @@ pub fn resolve_cli(explicit: Option<&str>, name: &str) -> Result<String, Provide
     find_in_fallback_dirs(name).ok_or_else(|| {
         ProviderError::Transport(format!(
             "spawn {name}: not found on PATH ({}) nor in {} — \
-             set `provider_bin` in config (e.g. `provider_bin = \"/opt/homebrew/bin/{name}\"`) \
-             or add an EnvironmentVariables PATH to your LaunchAgent plist",
+             set `provider_bin` in config (e.g. `provider_bin = \"/opt/homebrew/bin/{name}\"`)",
             path_for_error(),
             fallback_dirs().join(", "),
         ))
@@ -132,6 +131,5 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("provider_bin"), "got: {err}");
-        assert!(err.contains("LaunchAgent"), "got: {err}");
     }
 }
