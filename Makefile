@@ -5,7 +5,7 @@ APP_PATH := $(HOME)/Applications/proofd.app
 CLI_LINK := $(HOME)/.local/bin/proofd
 LSREGISTER := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-.PHONY: build install uninstall logs clear-logs test-service
+.PHONY: build install uninstall logs clear-logs test-service test-popup
 
 build:
 	cargo build --release
@@ -35,3 +35,7 @@ logs:
 # End-to-end check of the installed Services menu item; needs a GUI session and a working provider.
 test-service:
 	bash macos/test-service.sh
+
+# Native popup tests; needs a desktop session but no provider login or permissions.
+test-popup:
+	bash macos/test-popup.sh

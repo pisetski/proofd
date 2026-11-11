@@ -38,6 +38,27 @@ impl Sandbox {
         self.dir.path().join(rel)
     }
 
+    fn append_config(&self, setting: &str) {
+        use std::fs::OpenOptions;
+        writeln!(
+            OpenOptions::new()
+                .append(true)
+                .open(self.path("xdg/proofd/config.toml"))
+                .unwrap(),
+            "{setting}"
+        )
+        .unwrap();
+    }
+
+    fn service_settings(&self) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_proofd"))
+            .arg("--service-settings")
+            .env("HOME", self.dir.path())
+            .env("XDG_CONFIG_HOME", self.path("xdg"))
+            .output()
+            .unwrap()
+    }
+
     fn proofread(&self, input: &str) -> Output {
         let mut child = Command::new(env!("CARGO_BIN_EXE_proofd"))
             .env("HOME", self.dir.path())
@@ -150,4 +171,38 @@ fn version_flag_prints_version() {
 
     assert!(out.status.success());
     assert!(text(&out.stdout).starts_with("proofd "));
+}
+
+#[test]
+fn service_settings_default_to_replacement_without_calling_provider() {
+    let sandbox = Sandbox::with_provider_script("touch \"$HOME/called\"");
+    let out = sandbox.service_settings();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let settings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(settings["show_result_popup"], false);
+    assert!(!sandbox.path("called").exists());
+}
+
+#[test]
+fn popup_setting_is_exposed_without_changing_terminal_output() {
+    let sandbox = Sandbox::with_provider_script("cat >/dev/null\necho 'Fixed.'");
+    sandbox.append_config("show_result_popup = true");
+    let settings = sandbox.service_settings();
+    assert!(settings.status.success(), "{}", text(&settings.stderr));
+    let settings: serde_json::Value = serde_json::from_slice(&settings.stdout).unwrap();
+    assert_eq!(settings["show_result_popup"], true);
+    let out = sandbox.proofread("fixd");
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "Fixed.");
+}
+
+#[test]
+fn invalid_popup_setting_fails_without_output_or_provider_call() {
+    let sandbox = Sandbox::with_provider_script("touch \"$HOME/called\"");
+    sandbox.append_config("show_result_popup = \"yes\"");
+    let out = sandbox.service_settings();
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(text(&out.stderr).contains("invalid config"));
+    assert!(!sandbox.path("called").exists());
 }

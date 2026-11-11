@@ -22,3 +22,8 @@ timeout_secs = 15
 
 # Longer selections are refused.
 max_input_chars = 12000
+
+# Show a floating result panel instead of replacing the selection in the app.
+# Changed text is copied automatically unless you copied something else meanwhile.
+# Paste with Cmd+V. No additional macOS permissions are needed.
+show_result_popup = false

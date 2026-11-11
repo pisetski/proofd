@@ -28,6 +28,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("proofd {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        // Internal bridge for the native host: keep TOML parsing and validation here.
+        Some("--service-settings") => {
+            let cfg = config::load_from_path(None).map_err(|error| {
+                eprintln!("proofd: {error}");
+                error
+            })?;
+            println!(
+                "{}",
+                serde_json::json!({ "show_result_popup": cfg.show_result_popup })
+            );
+            Ok(())
+        }
         _ => {
             eprintln!("{USAGE}");
             std::process::exit(2);

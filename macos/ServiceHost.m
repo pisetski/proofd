@@ -1,5 +1,8 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import "ProofreadService.h"
+#import "ProofreadProcess.h"
+#import "ResultPanel.h"
 
 static void logMsg(NSString *fmt, ...) {
     va_list args;
@@ -13,7 +16,7 @@ static void logMsg(NSString *fmt, ...) {
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
     if (!fh) {
-        [[NSFileManager defaultManager] createDirectoryAtPath:logDir withIntermediateDirectories:YES attributes:nil error:nil];
+        [[NSFileManager defaultManager] createDirectoryAtPath:logDir withIntermediateDirectories:YES attributes:nil error:NULL];
         [data writeToFile:logPath atomically:YES];
     } else {
         [fh seekToEndOfFile];
@@ -22,13 +25,28 @@ static void logMsg(NSString *fmt, ...) {
     }
 }
 
-@interface ProofreadService : NSObject
-- (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error;
+@interface ProofreadService ()
+@property(nonatomic, copy) NSString *executable;
+@property(nonatomic, strong) NSPasteboard *clipboard;
+@property(nonatomic, strong) ResultPanel *resultPanel;
 @end
 
 @implementation ProofreadService
 
+- (instancetype)initWithExecutable:(NSString *)executable clipboard:(NSPasteboard *)clipboard {
+    self = [super init];
+    if (self) {
+        _executable = [executable copy];
+        _clipboard = clipboard;
+    }
+    return self;
+}
+
 - (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
+    NSInteger clipboardChangeCount = self.clipboard.changeCount;
+    // Invalidate before settings lookup: NSTask can pump the main run loop
+    // while waiting, and invalid config must also retire earlier requests.
+    [self.resultPanel close];
     logMsg(@"Service invoked");
 
     NSString *text = [pasteboard stringForType:NSPasteboardTypeString];
@@ -37,76 +55,70 @@ static void logMsg(NSString *fmt, ...) {
         if (error) *error = @"No text to proofread";
         return;
     }
-    logMsg(@"Got text: %@", [text substringToIndex:MIN(text.length, 50)]);
+    logMsg(@"Got selection (%lu UTF-16 units)", (unsigned long)text.length);
 
-    NSString *proofdPath = [[NSBundle mainBundle] pathForAuxiliaryExecutable:@"proofd"];
-    if (!proofdPath) {
-        logMsg(@"proofd binary missing from %@", [[NSBundle mainBundle] bundlePath]);
-        if (error) *error = @"proofd binary missing from proofd.app; reinstall it";
+    ProofreadProcessResult *settingsResult = ProofreadRunProcess(self.executable, @[@"--service-settings"], @"");
+    if (settingsResult.error) {
+        logMsg(@"Settings failed: %@", settingsResult.error);
+        if (error) *error = settingsResult.error;
+        return;
+    }
+    id settings = [NSJSONSerialization JSONObjectWithData:[settingsResult.output dataUsingEncoding:NSUTF8StringEncoding]
+                                                options:0 error:NULL];
+    id popup = [settings isKindOfClass:NSDictionary.class] ? settings[@"show_result_popup"] : nil;
+    if (!popup || CFGetTypeID((__bridge CFTypeRef)popup) != CFBooleanGetTypeID()) {
+        if (error) *error = @"Invalid service settings from proofd; reinstall the app";
         return;
     }
 
-    NSPipe *inputPipe = [NSPipe pipe];
-    NSPipe *outputPipe = [NSPipe pipe];
-    NSPipe *errorPipe = [NSPipe pipe];
-
-    NSTask *task = [[NSTask alloc] init];
-    [task setLaunchPath:proofdPath];
-        [task setStandardInput:inputPipe];
-    [task setStandardOutput:outputPipe];
-    [task setStandardError:errorPipe];
-
-    NSData *textData = [text dataUsingEncoding:NSUTF8StringEncoding];
-    [[inputPipe fileHandleForWriting] writeData:textData];
-    [[inputPipe fileHandleForWriting] closeFile];
+    if ([popup boolValue]) {
+        if (!self.resultPanel) self.resultPanel = [[ResultPanel alloc] initWithPasteboard:self.clipboard];
+        // The service advertises a return type for its default replacement mode.
+        // Remove it here: returning the original string would reinsert it and
+        // collapse the caller's selection; returning "" would delete it.
+        [pasteboard clearContents];
+        [self.resultPanel beginProofreading:text executable:self.executable clipboardChangeCount:clipboardChangeCount];
+        return;
+    }
 
     NSStatusItem *busyIndicator = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
     busyIndicator.button.image = [NSImage imageWithSystemSymbolName:@"text.magnifyingglass"
                                            accessibilityDescription:@"Proofreading"];
 
     NSDate *started = [NSDate date];
-    [task launch];
-    [task waitUntilExit];
+    ProofreadProcessResult *process = ProofreadRunProcess(self.executable, @[], text);
     [[NSStatusBar systemStatusBar] removeStatusItem:busyIndicator];
-    logMsg(@"proofd exited %ld after %.0fms", (long)[task terminationStatus], -[started timeIntervalSinceNow] * 1000);
-
-    NSData *errData = [[errorPipe fileHandleForReading] readDataToEndOfFile];
-    NSString *errMsg = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
-    if (errMsg.length > 0) {
-        logMsg(@"proofd stderr:\n%@", errMsg);
+    logMsg(@"proofd finished after %.0fms", -[started timeIntervalSinceNow] * 1000);
+    if (process.standardError.length > 0) {
+        logMsg(@"proofd stderr:\n%@", process.standardError);
     }
-
-    if ([task terminationStatus] != 0) {
-        if (!errMsg || errMsg.length == 0) errMsg = @"unknown error";
-        if (error) {
-            *error = [NSString stringWithFormat:@"proofd failed (exit %ld): %@", (long)[task terminationStatus], errMsg];
-        }
+    if (process.error) {
+        if (error) *error = process.error;
         return;
     }
-
-    NSData *outputData = [[outputPipe fileHandleForReading] readDataToEndOfFile];
-    NSString *result = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
-    if (!result) {
-        logMsg(@"Failed to read proofd output");
-        if (error) *error = @"Failed to read proofd output";
+    if (!process.output.length) {
+        if (error) *error = @"proofd returned empty output";
         return;
     }
-    logMsg(@"Got result: %@", [result substringToIndex:MIN(result.length, 50)]);
 
     [pasteboard clearContents];
-    [pasteboard setString:result forType:NSPasteboardTypeString];
+    [pasteboard setString:process.output forType:NSPasteboardTypeString];
     logMsg(@"Wrote result back to pasteboard");
 }
 
 @end
 
+#ifndef PROOFD_NO_MAIN
 @interface AppDelegate : NSObject <NSApplicationDelegate>
+@property(nonatomic, strong) ProofreadService *service;
 @end
 
 @implementation AppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     logMsg(@"App launching, registering service provider");
-    NSRegisterServicesProvider([[ProofreadService alloc] init], @"proofd");
+    NSString *executable = [[NSBundle mainBundle] pathForAuxiliaryExecutable:@"proofd"];
+    self.service = [[ProofreadService alloc] initWithExecutable:executable clipboard:NSPasteboard.generalPasteboard];
+    NSRegisterServicesProvider(self.service, @"proofd");
     // Stay running; service invocations are handled while app runs
     // App is terminated by user or system when no longer needed
 }
@@ -115,9 +127,11 @@ static void logMsg(NSString *fmt, ...) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSApplication *app = [NSApplication sharedApplication];
-        [app setDelegate:[[AppDelegate alloc] init]];
+        AppDelegate *delegate = [[AppDelegate alloc] init];
+        [app setDelegate:delegate];
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [app run];
     }
     return 0;
 }
+#endif

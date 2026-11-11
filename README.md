@@ -44,6 +44,17 @@ cp config.example.toml ~/.config/proofd/config.toml
 To change the prompt, copy `skills/proofread.md` to
 `~/.config/proofd/proofread.md` and edit it.
 
+### Result popup
+
+To preview and copy the result instead of replacing text, add to your config:
+
+```toml
+show_result_popup = true
+```
+
+Use the same shortcut, wait for **Copied**, then press ⌘V. Click outside to dismiss.
+Requires the app to support macOS Services; no additional permissions needed.
+
 ## Uninstall
 
 ```sh
