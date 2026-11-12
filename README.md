@@ -26,7 +26,8 @@ Then enable **Proofread Selection** in System Settings › Keyboard › Keyboard
 Shortcuts › Services › Text, and assign your shortcut.
 
 For copy-first use, assign a separate shortcut to **Proofread Clipboard** under
-Services. Press ⌘C, invoke that shortcut, then press ⌘V when the popup says **Copied**.
+Services. Press ⌘C, invoke that shortcut, then press ⌘V once proofreading finishes.
+Without a popup, the menu-bar proofreading icon disappears when finished.
 This action doesn't require the app to provide selected text.
 
 ## Terminal
@@ -50,7 +51,7 @@ To change the prompt, copy `skills/proofread.md` to
 
 ### Result popup
 
-To preview and copy the result instead of replacing text, add to your config:
+To show a result popup for either action, add to your config:
 
 ```toml
 show_result_popup = true

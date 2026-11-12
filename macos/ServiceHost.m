@@ -29,6 +29,7 @@ static void logMsg(NSString *fmt, ...) {
 @property(nonatomic, copy) NSString *executable;
 @property(nonatomic, strong) NSPasteboard *clipboard;
 @property(nonatomic, strong) ResultPanel *resultPanel;
+@property(nonatomic) NSUInteger invocationGeneration;
 @end
 
 @implementation ProofreadService
@@ -43,21 +44,53 @@ static void logMsg(NSString *fmt, ...) {
 }
 
 - (void)proofreadClipboardService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
+    NSUInteger invocation = ++self.invocationGeneration;
     NSInteger changeCount = self.clipboard.changeCount;
     [self.resultPanel close];
     logMsg(@"Clipboard service invoked");
     // This action has no send/return types. Read only the general clipboard;
     // the calling app never has to expose a selection or accept replacement text.
     NSString *text = [self.clipboard stringForType:NSPasteboardTypeString];
-    if (!self.resultPanel) self.resultPanel = [[ResultPanel alloc] initWithPasteboard:self.clipboard];
-    if (![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) {
-        [self.resultPanel showMessage:@"Copy some text first"];
+    NSString *settingsError = nil;
+    NSNumber *popup = [self popupSettingWithError:&settingsError];
+    if (invocation != self.invocationGeneration) return;
+    if (!popup) {
+        if (error) *error = settingsError;
         return;
     }
-    [self.resultPanel beginProofreading:text executable:self.executable clipboardChangeCount:changeCount];
+    if (![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) {
+        if (popup.boolValue) {
+            if (!self.resultPanel) self.resultPanel = [[ResultPanel alloc] initWithPasteboard:self.clipboard];
+            [self.resultPanel showMessage:@"Copy some text first"];
+        } else {
+            if (error) *error = @"Copy some text first";
+            logMsg(@"Clipboard contains no text");
+        }
+        return;
+    }
+    if (!self.resultPanel) self.resultPanel = [[ResultPanel alloc] initWithPasteboard:self.clipboard];
+    [self.resultPanel beginProofreading:text executable:self.executable clipboardChangeCount:changeCount showPopup:popup.boolValue];
+}
+
+- (NSNumber *)popupSettingWithError:(NSString **)error {
+    ProofreadProcessResult *settingsResult = ProofreadRunProcess(self.executable, @[@"--service-settings"], @"");
+    if (settingsResult.error) {
+        logMsg(@"Settings failed: %@", settingsResult.error);
+        if (error) *error = settingsResult.error;
+        return nil;
+    }
+    id settings = [NSJSONSerialization JSONObjectWithData:[settingsResult.output dataUsingEncoding:NSUTF8StringEncoding]
+                                                options:0 error:NULL];
+    id popup = [settings isKindOfClass:NSDictionary.class] ? settings[@"show_result_popup"] : nil;
+    if (!popup || CFGetTypeID((__bridge CFTypeRef)popup) != CFBooleanGetTypeID()) {
+        if (error) *error = @"Invalid service settings from proofd; reinstall the app";
+        return nil;
+    }
+    return popup;
 }
 
 - (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
+    NSUInteger invocation = ++self.invocationGeneration;
     NSInteger clipboardChangeCount = self.clipboard.changeCount;
     // Invalidate before settings lookup: NSTask can pump the main run loop
     // while waiting, and invalid config must also retire earlier requests.
@@ -72,17 +105,14 @@ static void logMsg(NSString *fmt, ...) {
     }
     logMsg(@"Got selection (%lu UTF-16 units)", (unsigned long)text.length);
 
-    ProofreadProcessResult *settingsResult = ProofreadRunProcess(self.executable, @[@"--service-settings"], @"");
-    if (settingsResult.error) {
-        logMsg(@"Settings failed: %@", settingsResult.error);
-        if (error) *error = settingsResult.error;
+    NSString *settingsError = nil;
+    NSNumber *popup = [self popupSettingWithError:&settingsError];
+    if (invocation != self.invocationGeneration) {
+        [pasteboard clearContents];
         return;
     }
-    id settings = [NSJSONSerialization JSONObjectWithData:[settingsResult.output dataUsingEncoding:NSUTF8StringEncoding]
-                                                options:0 error:NULL];
-    id popup = [settings isKindOfClass:NSDictionary.class] ? settings[@"show_result_popup"] : nil;
-    if (!popup || CFGetTypeID((__bridge CFTypeRef)popup) != CFBooleanGetTypeID()) {
-        if (error) *error = @"Invalid service settings from proofd; reinstall the app";
+    if (!popup) {
+        if (error) *error = settingsError;
         return;
     }
 
@@ -103,6 +133,10 @@ static void logMsg(NSString *fmt, ...) {
     NSDate *started = [NSDate date];
     ProofreadProcessResult *process = ProofreadRunProcess(self.executable, @[], text);
     [[NSStatusBar systemStatusBar] removeStatusItem:busyIndicator];
+    if (invocation != self.invocationGeneration) {
+        [pasteboard clearContents];
+        return;
+    }
     logMsg(@"proofd finished after %.0fms", -[started timeIntervalSinceNow] * 1000);
     if (process.standardError.length > 0) {
         logMsg(@"proofd stderr:\n%@", process.standardError);

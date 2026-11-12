@@ -1,6 +1,16 @@
 #import "ResultPanel.h"
 #import "ProofreadProcess.h"
 
+// A preview must leave typing/paste directed at the source application, even
+// if AppKit or a text subview attempts to give this window keyboard focus.
+@interface ProofreadPreviewPanel : NSPanel
+@end
+
+@implementation ProofreadPreviewPanel
+- (BOOL)canBecomeKeyWindow { return NO; }
+- (BOOL)canBecomeMainWindow { return NO; }
+@end
+
 @interface ResultPanel ()
 @property(nonatomic, strong) NSPasteboard *pasteboard;
 @property(nonatomic, strong) NSTextField *statusLabel;
@@ -15,12 +25,14 @@
 @property(nonatomic) BOOL busy;
 @property(nonatomic, strong) id globalMouseMonitor;
 @property(nonatomic, strong) id localMouseMonitor;
+@property(nonatomic) BOOL showPopup;
+@property(nonatomic, strong) NSStatusItem *busyIndicator;
 @end
 
 @implementation ResultPanel
 
 - (instancetype)initWithPasteboard:(NSPasteboard *)pasteboard {
-    NSPanel *window = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 70)
+    NSPanel *window = [[ProofreadPreviewPanel alloc] initWithContentRect:NSMakeRect(0, 0, 420, 70)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskNonactivatingPanel
         backing:NSBackingStoreBuffered defer:NO];
     self = [super initWithWindow:window];
@@ -106,6 +118,8 @@
 }
 
 - (void)showMessage:(NSString *)message {
+    [self removeBusyIndicator];
+    self.showPopup = YES;
     ++self.generation;
     self.busy = NO;
     self.result = nil;
@@ -119,16 +133,32 @@
 }
 
 - (void)beginProofreading:(NSString *)input executable:(NSString *)executable clipboardChangeCount:(NSInteger)changeCount {
+    [self beginProofreading:input executable:executable clipboardChangeCount:changeCount showPopup:YES];
+}
+
+- (void)beginProofreading:(NSString *)input executable:(NSString *)executable clipboardChangeCount:(NSInteger)changeCount showPopup:(BOOL)showPopup {
+    [self removeBusyIndicator];
+    self.showPopup = showPopup;
     self.input = input;
     self.executable = executable;
     self.result = nil;
     self.busy = YES;
     NSUInteger generation = ++self.generation;
     self.statusLabel.stringValue = @"Proofreading…";
-    [self layoutWithText:nil loading:YES];
-    [self.spinner startAnimation:nil];
-    [self.window orderFrontRegardless];
-    [self monitorOutsideClicks];
+    if (showPopup) {
+        [self layoutWithText:nil loading:YES];
+        [self.spinner startAnimation:nil];
+        [self.window orderFrontRegardless];
+        [self monitorOutsideClicks];
+    } else {
+        [self.window orderOut:nil];
+        [self stopMonitoringClicks];
+        [self.spinner stopAnimation:nil];
+        self.busyIndicator = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+        self.busyIndicator.button.image = [NSImage imageWithSystemSymbolName:@"text.magnifyingglass"
+                                                   accessibilityDescription:@"Proofreading"];
+        self.busyIndicator.button.toolTip = @"Proofreading clipboard…";
+    }
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         ProofreadProcessResult *process = ProofreadRunProcess(executable, @[], input);
@@ -136,17 +166,18 @@
             // Closing and newer invocations revoke this request's UI/clipboard writes.
             if (generation != self.generation) return;
             self.busy = NO;
+            [self removeBusyIndicator];
             [self.spinner stopAnimation:nil];
             if (process.error || ![process.output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) {
                 NSLog(@"proofd popup: %@", process.error ?: @"Empty output");
                 self.statusLabel.stringValue = @"Couldn’t proofread";
-                [self layoutWithText:@"Check your provider and configuration, then try again." loading:NO];
+                if (self.showPopup) [self layoutWithText:@"Check your provider and configuration, then try again." loading:NO];
                 self.actionButton.title = @"Retry";
                 self.actionButton.action = @selector(retry:);
                 return;
             }
             self.result = process.output;
-            [self layoutWithText:self.result loading:NO];
+            if (self.showPopup) [self layoutWithText:self.result loading:NO];
             self.actionButton.title = @"Copy";
             self.actionButton.action = @selector(copyResult:);
             if ([self.result isEqualToString:input]) {
@@ -155,6 +186,7 @@
                 [self copyResult:nil];
             } else {
                 self.statusLabel.stringValue = @"Ready — Copy to paste";
+                if (!self.showPopup) NSLog(@"proofd clipboard: result discarded because clipboard changed");
             }
         });
     });
@@ -178,6 +210,11 @@
     self.localMouseMonitor = nil;
 }
 
+- (void)removeBusyIndicator {
+    if (self.busyIndicator) [[NSStatusBar systemStatusBar] removeStatusItem:self.busyIndicator];
+    self.busyIndicator = nil;
+}
+
 - (void)monitorOutsideClicks {
     [self stopMonitoringClicks];
     NSEventMask clicks = NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown;
@@ -196,13 +233,24 @@
     }];
 }
 
-- (void)windowWillClose:(NSNotification *)notification {
+- (void)discardRequest {
+    [self removeBusyIndicator];
     [self stopMonitoringClicks];
     ++self.generation;
     self.busy = NO;
     [self.spinner stopAnimation:nil];
     self.result = nil;
     self.input = nil;
+}
+
+- (void)close {
+    // Hidden requests have no visible window to close, but still need revoking.
+    [self discardRequest];
+    [super close];
+}
+
+- (void)windowWillClose:(NSNotification *)notification {
+    [self discardRequest];
 }
 
 - (void)dealloc {

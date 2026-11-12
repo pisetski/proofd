@@ -96,6 +96,8 @@ int main(void) {
         check([status(panel) containsString:@"Proofreading"], @"loading feedback appears immediately");
         snapshot(panel, @"loading");
         check(!panel.window.keyWindow && !NSApp.active, @"showing panel does not activate app or take keyboard focus");
+        [panel.window makeKeyWindow];
+        check(!panel.window.keyWindow, @"preview refuses keyboard focus even when AppKit requests key status");
         awaitReady(panel);
         check([clipboardText(clipboard) isEqualToString:@"Corrected text."], @"success automatically copies plain text");
         check([status(panel) containsString:@"Copied"], @"success confirms copy");
@@ -243,15 +245,18 @@ int main(void) {
         check(error == nil && [clipboardText(selection) isEqualToString:@"Corrected text."], @"default flow returns replacement to Services");
         check([clipboardText(clipboard) isEqualToString:@"Do not change in replacement mode"], @"default flow does not use global clipboard");
 
-        // Clipboard mode is independent of the caller's selection and of the
-        // show_result_popup setting (the stub still advertises false).
+        // Clipboard mode is independent of the caller's selection, but respects
+        // show_result_popup (the stub currently advertises false).
         check([service respondsToSelector:NSSelectorFromString(@"proofreadClipboardService:userData:error:")],
               @"clipboard action is implemented");
         put(selection, @"fail");
         put(clipboard, @"input");
         [service proofreadClipboardService:selection userData:nil error:&error];
+        check(!servicePanel.window.visible && [servicePanel valueForKey:@"busyIndicator"] != nil,
+              @"hidden clipboard mode uses only a menu-bar busy indicator");
         awaitReady(servicePanel);
-        check(error == nil && servicePanel.window.visible, @"clipboard action always opens popup");
+        check(error == nil && !servicePanel.window.visible, @"clipboard action stays hidden when popup is disabled");
+        check([servicePanel valueForKey:@"busyIndicator"] == nil, @"hidden completion removes the busy indicator");
         check([clipboardText(clipboard) isEqualToString:@"Corrected text."], @"clipboard action proofreads copied text");
         check([clipboardText(selection) isEqualToString:@"fail"], @"clipboard action never reads or changes service selection");
 
@@ -260,6 +265,56 @@ int main(void) {
         put(clipboard, @"Copied after invoking");
         awaitReady(servicePanel);
         check([clipboardText(clipboard) isEqualToString:@"Copied after invoking"], @"clipboard action preserves newer clipboard content");
+
+        // Settings lookup pumps the main run loop. An older invocation must
+        // not resume after a nested invocation and supersede its newer input.
+        [@"" writeToFile:slowSettings atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        put(clipboard, @"slow");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            put(clipboard, @"input");
+            NSString *nestedError = nil;
+            [service proofreadClipboardService:selection userData:nil error:&nestedError];
+            check(nestedError == nil, @"nested clipboard invocation starts");
+        });
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        awaitReady(servicePanel);
+        pump(0.5);
+        check([clipboardText(clipboard) isEqualToString:@"Corrected text."], @"new invocation during settings lookup wins over older input");
+
+        put(clipboard, @"slow");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            put(clipboard, @"");
+            NSString *nestedError = nil;
+            [service proofreadClipboardService:selection userData:nil error:&nestedError];
+            check(nestedError != nil, @"nested empty clipboard is reported");
+        });
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        check(![[servicePanel valueForKey:@"busy"] boolValue], @"older invocation cannot restart work after a newer invalid invocation");
+        pump(0.5);
+        check([clipboardText(clipboard) isEqualToString:@""], @"empty newer clipboard survives obsolete settings completion");
+        [fm removeItemAtPath:slowSettings error:NULL];
+
+        // A later invocation, including an invalid one, retires silent work.
+        put(clipboard, @"slow");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        put(clipboard, @"\n ");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        pump(0.6);
+        check(error != nil && !servicePanel.window.visible, @"empty clipboard reports an error without a popup in hidden mode");
+        check([clipboardText(clipboard) isEqualToString:@"\n "], @"invalid input cancels an older hidden request");
+        error = nil;
+
+        put(clipboard, @"fail");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        awaitReady(servicePanel);
+        check(!servicePanel.window.visible && [clipboardText(clipboard) isEqualToString:@"fail"], @"hidden provider failure never opens a popup or copies diagnostics");
+
+        // The same action displays a popup when explicitly enabled.
+        [script writeToFile:executable atomically:NO encoding:NSUTF8StringEncoding error:NULL];
+        put(clipboard, @"input");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        awaitReady(servicePanel);
+        check(servicePanel.window.visible && [clipboardText(clipboard) isEqualToString:@"Corrected text."], @"clipboard action opens popup when enabled");
 
         // Invalid clipboard input retires the pending job and explains what to do.
         put(clipboard, @"slow");

@@ -22,6 +22,8 @@
 	<string>Copyright © 2026 proofd. All rights reserved.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSServices</key>
 	<array>
 		<dict>
