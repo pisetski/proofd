@@ -25,6 +25,10 @@ into `~/.local/bin`, which must be on your `PATH` to use it from the terminal.
 Then enable **Proofread Selection** in System Settings › Keyboard › Keyboard
 Shortcuts › Services › Text, and assign your shortcut.
 
+For copy-first use, assign a separate shortcut to **Proofread Clipboard** under
+Services. Press ⌘C, invoke that shortcut, then press ⌘V when the popup says **Copied**.
+This action doesn't require the app to provide selected text.
+
 ## Terminal
 
 ```sh

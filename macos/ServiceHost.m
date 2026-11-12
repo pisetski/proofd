@@ -42,6 +42,21 @@ static void logMsg(NSString *fmt, ...) {
     return self;
 }
 
+- (void)proofreadClipboardService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
+    NSInteger changeCount = self.clipboard.changeCount;
+    [self.resultPanel close];
+    logMsg(@"Clipboard service invoked");
+    // This action has no send/return types. Read only the general clipboard;
+    // the calling app never has to expose a selection or accept replacement text.
+    NSString *text = [self.clipboard stringForType:NSPasteboardTypeString];
+    if (!self.resultPanel) self.resultPanel = [[ResultPanel alloc] initWithPasteboard:self.clipboard];
+    if (![text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) {
+        [self.resultPanel showMessage:@"Copy some text first"];
+        return;
+    }
+    [self.resultPanel beginProofreading:text executable:self.executable clipboardChangeCount:changeCount];
+}
+
 - (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
     NSInteger clipboardChangeCount = self.clipboard.changeCount;
     // Invalidate before settings lookup: NSTask can pump the main run loop

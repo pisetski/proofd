@@ -105,6 +105,19 @@
     [self beginProofreading:input executable:executable clipboardChangeCount:self.pasteboard.changeCount];
 }
 
+- (void)showMessage:(NSString *)message {
+    ++self.generation;
+    self.busy = NO;
+    self.result = nil;
+    self.input = nil;
+    [self.spinner stopAnimation:nil];
+    self.statusLabel.stringValue = message;
+    [self layoutWithText:nil loading:NO];
+    self.actionButton.hidden = YES;
+    [self.window orderFrontRegardless];
+    [self monitorOutsideClicks];
+}
+
 - (void)beginProofreading:(NSString *)input executable:(NSString *)executable clipboardChangeCount:(NSInteger)changeCount {
     self.input = input;
     self.executable = executable;

@@ -243,6 +243,42 @@ int main(void) {
         check(error == nil && [clipboardText(selection) isEqualToString:@"Corrected text."], @"default flow returns replacement to Services");
         check([clipboardText(clipboard) isEqualToString:@"Do not change in replacement mode"], @"default flow does not use global clipboard");
 
+        // Clipboard mode is independent of the caller's selection and of the
+        // show_result_popup setting (the stub still advertises false).
+        check([service respondsToSelector:NSSelectorFromString(@"proofreadClipboardService:userData:error:")],
+              @"clipboard action is implemented");
+        put(selection, @"fail");
+        put(clipboard, @"input");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        awaitReady(servicePanel);
+        check(error == nil && servicePanel.window.visible, @"clipboard action always opens popup");
+        check([clipboardText(clipboard) isEqualToString:@"Corrected text."], @"clipboard action proofreads copied text");
+        check([clipboardText(selection) isEqualToString:@"fail"], @"clipboard action never reads or changes service selection");
+
+        put(clipboard, @"slow");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        put(clipboard, @"Copied after invoking");
+        awaitReady(servicePanel);
+        check([clipboardText(clipboard) isEqualToString:@"Copied after invoking"], @"clipboard action preserves newer clipboard content");
+
+        // Invalid clipboard input retires the pending job and explains what to do.
+        put(clipboard, @"slow");
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        for (NSString *blank in @[@"", @" \n\t"]) {
+            put(clipboard, blank);
+            [service proofreadClipboardService:selection userData:nil error:&error];
+            check(servicePanel.window.visible && [status(servicePanel) containsString:@"Copy some text"], @"empty clipboard gets actionable popup feedback");
+            check(![[servicePanel valueForKey:@"busy"] boolValue], @"empty clipboard does not start proofreading");
+            check([[servicePanel valueForKey:@"actionButton"] isHidden], @"empty clipboard has no stale Copy or Retry action");
+        }
+        [clipboard clearContents];
+        [clipboard setData:[NSData dataWithBytes:"x" length:1] forType:NSPasteboardTypePNG];
+        [service proofreadClipboardService:selection userData:nil error:&error];
+        pump(0.6);
+        check([status(servicePanel) containsString:@"Copy some text"] && clipboardText(clipboard) == nil,
+              @"non-text clipboard is preserved and obsolete jobs cannot overwrite it");
+        [servicePanel close];
+
         [@"#!/bin/sh\necho bad-config >&2\nexit 1\n" writeToFile:executable atomically:NO encoding:NSUTF8StringEncoding error:NULL];
         put(selection, @"original");
         [service proofreadService:selection userData:nil error:&error];

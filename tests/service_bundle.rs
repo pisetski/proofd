@@ -33,6 +33,10 @@ fn strings(dict: &Dictionary, key: &str) -> Vec<String> {
 }
 
 fn proofread_service() -> Dictionary {
+    service_named("Proofread Selection")
+}
+
+fn service_named(name: &str) -> Dictionary {
     let plist = info_plist();
     let services = plist
         .get("NSServices")
@@ -44,11 +48,25 @@ fn proofread_service() -> Dictionary {
         .find(|s| {
             s.get("NSMenuItem")
                 .and_then(Value::as_dictionary)
-                .map(|m| string(m, "default") == "Proofread Selection")
+                .map(|m| string(m, "default") == name)
                 .unwrap_or(false)
         })
         .cloned()
-        .expect("a service with menu item \"Proofread Selection\"")
+        .unwrap_or_else(|| panic!("missing service {name:?}"))
+}
+
+#[test]
+fn clipboard_action_requires_no_selection_or_replacement_support() {
+    let service = service_named("Proofread Clipboard");
+    assert!(!service.contains_key("NSSendTypes"));
+    assert!(!service.contains_key("NSReturnTypes"));
+    assert!(service
+        .get("NSRequiredContext")
+        .and_then(Value::as_dictionary)
+        .unwrap()
+        .is_empty());
+    assert_eq!(string(&service, "NSMessage"), "proofreadClipboardService");
+    assert_eq!(string(&service, "NSPortName"), "proofd");
 }
 
 // Text between the first `@"` after `anchor` and the closing quote.
