@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::thread::JoinHandle;
 use tempfile::TempDir;
 
@@ -66,6 +66,10 @@ impl Sandbox {
     }
 
     fn proofread_with_env(&self, input: &str, env: &[(&str, &str)]) -> Output {
+        self.spawn_proofread(input, env).wait_with_output().unwrap()
+    }
+
+    fn spawn_proofread(&self, input: &str, env: &[(&str, &str)]) -> Child {
         let mut child = Command::new(env!("CARGO_BIN_EXE_proofd"))
             .envs(env.iter().copied())
             .env("HOME", self.dir.path())
@@ -82,7 +86,7 @@ impl Sandbox {
             .unwrap()
             .write_all(input.as_bytes())
             .unwrap();
-        child.wait_with_output().unwrap()
+        child
     }
 }
 
@@ -237,6 +241,19 @@ fn version_flag_prints_version() {
     assert!(text(&out.stdout).starts_with("proofd "));
 }
 
+#[test]
+fn config_error_is_reported_once_in_plain_words() {
+    let out = Sandbox::with_config("timeout_secs = 0").proofread("some text");
+
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.starts_with("proofd: invalid config at "),
+        "stderr: {stderr}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "stderr: {stderr}");
+}
+
 // The stub keeps one session in proofd's sandbox and one of the user's elsewhere.
 fn opencode_stub(on_run: &str) -> String {
     format!(
@@ -364,6 +381,66 @@ fn opencode_sessions_in_the_sandbox_are_deleted_after_success_failure_and_timeou
             text(&out.stderr)
         );
     }
+}
+
+fn eventually(condition: impl Fn() -> bool) -> bool {
+    (0..100).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        condition()
+    })
+}
+
+fn send_signal(signal: &str, pid: &str) -> bool {
+    Command::new("kill")
+        .args([signal, pid])
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+// A failing assertion must not leave the stub's sleep running.
+struct KillOnDrop(String);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        send_signal("-KILL", &self.0);
+    }
+}
+
+// The service host sends SIGTERM at its deadline, when a slow provider is still running.
+#[test]
+fn sigterm_stops_the_provider_and_still_deletes_its_session() {
+    let sandbox = opencode_sandbox(
+        "echo $$ > \"$HOME/provider.pid\"\n  exec sleep 30",
+        "timeout_secs = 60",
+    );
+    let pid_file = sandbox.path("provider.pid");
+    let read_pid = || std::fs::read_to_string(&pid_file).unwrap_or_default();
+
+    let proofd = sandbox.spawn_proofread("some text", &[]);
+    let _proofd_guard = KillOnDrop(proofd.id().to_string());
+    assert!(
+        eventually(|| !read_pid().trim().is_empty()),
+        "provider never started"
+    );
+    let provider = KillOnDrop(read_pid().trim().to_string());
+    send_signal("-TERM", &proofd.id().to_string());
+
+    let out = proofd.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "");
+    assert!(
+        text(&out.stderr).ends_with("proofd: stopped by SIGTERM\n"),
+        "stderr: {}",
+        text(&out.stderr)
+    );
+    assert!(
+        eventually(|| !send_signal("-0", &provider.0)),
+        "provider {} outlived proofd",
+        provider.0
+    );
+    assert_eq!(deleted_sessions(&sandbox), vec!["ses_proofd".to_string()]);
 }
 
 #[test]
