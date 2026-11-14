@@ -65,6 +65,10 @@ int main(void) {
                      styledText(@[@"It's", boldStyle(), @" fine", plainStyle()]),
                      @"a fix at the very start keeps the first word's style");
 
+        expectStyled(revisedTextStyledLike(styledText(@[@"beleive", boldStyle(), @" it\n", plainStyle()]), @"believe it"),
+                     styledText(@[@"believe", boldStyle(), @" it", plainStyle()]),
+                     @"a line break only the rich copy has stays out of the result");
+
         NSAttributedString *original = styledText(@[[@"" stringByPaddingToLength:4000 withString:@"a " startingAtIndex:0], boldStyle()]);
         NSString *rewritten = [@"" stringByPaddingToLength:5000 withString:@"b " startingAtIndex:0];
         NSAttributedString *restyled = revisedTextStyledLike(original, rewritten);

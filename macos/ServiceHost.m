@@ -314,7 +314,9 @@ static __weak CursorBusyIndicator *visibleIndicator;
 
     NSData *rtf = [pasteboard dataForType:NSPasteboardTypeRTF];
     NSAttributedString *styled = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
-    NSString *text = styled ? styled.string : [pasteboard stringForType:NSPasteboardTypeString];
+    // The plain copy is the selection itself: Notes' RTF copy adds a line break, which
+    // would replace the selection and move the cursor to the next line.
+    NSString *text = [pasteboard stringForType:NSPasteboardTypeString] ?: styled.string;
     if (!text || text.length == 0) {
         logMsg(@"No text on pasteboard");
         if (error) *error = @"No text to proofread";

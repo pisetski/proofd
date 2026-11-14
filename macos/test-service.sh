@@ -75,6 +75,7 @@ if [[ $STATUS -ne 0 ]]; then
     echo "service log:" >&2
     tail -c +"$LOG_OFFSET" "$SERVICE_LOG" >&2
     [[ $STATUS -eq 3 ]] && fail "rich text came back without its bold: '$OUTPUT'"
+    [[ $STATUS -eq 4 ]] && fail "rich text came back with a line break the selection lacked: '$OUTPUT'"
     fail "rich text was not proofread (exit $STATUS): '$OUTPUT'"
 fi
 pass "kept bold through: '$INPUT' -> '$OUTPUT'"
