@@ -28,7 +28,7 @@ lines; start with [`src/providers`](src/providers).
 ## Install
 
 Requires macOS 14 or later, Xcode Command Line Tools,
-[Rust](https://rustup.rs) 1.75 or newer, and `claude`, `opencode`, or a local
+[Rust](https://rustup.rs) 1.88 or newer, and `claude`, `opencode`, or a local
 model server.
 
 ```sh
