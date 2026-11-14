@@ -1,12 +1,13 @@
 # proofd
 
-Fix typos and grammar in any macOS app, in place.
+Fix typos and grammar in place, in any macOS app with a Services menu.
 
 ![Selected text corrected in place](docs/demo.gif)
 
 Select text, then right-click › Services › Proofread Selection, or press a
 shortcut you assign. proofd fixes errors only, and keeps your tone, language,
-and Markdown.
+and Markdown. In rich text it keeps bold, italics, and links: a fixed word takes
+the style of the word it replaces.
 
 It runs through the `claude` or `opencode` CLI you already use, or a local
 model, so you need no new account or API key.
@@ -48,7 +49,8 @@ Shortcuts › Services › Text, and assign a shortcut your apps don't already
 use, like ⌃⇧,.
 
 Always select text first. With nothing selected, some apps, like Firefox,
-send the whole field.
+send the whole field. Apps without a Services menu, including many Electron
+apps, can't use proofd.
 
 ## Providers
 
@@ -56,7 +58,7 @@ send the whole field.
 | --------------- | -------------------------- | -------------------- |
 | `claude`        | Anthropic                  | 2 s with Haiku       |
 | `opencode`      | The provider of your model | 2 s plus the model   |
-| `openai-compat` | A server on your Mac       | 13–15 s with Gemma 4 |
+| `openai-compat` | The server at `base_url`   | 13–15 s with Gemma 4 |
 
 Measured on an M1 Pro after the first run, which also loads the model.
 Gemma 4 spends most of its time reasoning; a model without reasoning is
@@ -66,11 +68,12 @@ proofd uses `claude` with Haiku by default. If only `opencode` is installed,
 it uses DeepSeek V4.1 Flash Free, which is free for a limited time, up to a
 usage limit, and whose provider
 [keeps no data and doesn't train on it](https://opencode.ai/docs/zen/#privacy).
-Once you reach the limit, proofd shows opencode's error; set `model` to
-another one.
+Once you reach the limit, or the model is retired, proofd shows opencode's
+error; set `model` to another one from `opencode models`.
 
 To use a local model, start the server in [LM Studio](https://lmstudio.ai),
-then create `~/.config/proofd/config.toml`:
+then create `~/.config/proofd/config.toml`. proofd sends no API key, so
+`openai-compat` is for servers on your Mac:
 
 ```toml
 provider = "openai-compat"
@@ -89,7 +92,7 @@ Every setting is optional, except that `openai-compat` needs `base_url` and
 timeout, and input limit. `proofd --help` shows where proofd looks for its
 files.
 
-To change the prompt, copy `skills/proofread.md` to
+To change the prompt, copy `prompts/proofread.md` to
 `~/.config/proofd/proofread.md` and edit it.
 
 ## Terminal

@@ -5,6 +5,10 @@ edition = "2024"
 rust-version = "1.88"
 description = "Proofreads text from stdin; engine behind the macOS Proofread Selection service"
 license = "GPL-3.0-only"
+repository = "https://github.com/pisetski/proofd"
+readme = "README.md"
+keywords = ["macos", "proofreading", "grammar", "llm", "services"]
+categories = ["command-line-utilities", "text-processing"]
 
 [[bin]]
 name = "proofd"
