@@ -1,13 +1,24 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
+static const unsigned long long kMaxLogBytes = 1024 * 1024;
+
+static void keepOneOldLogIfFull(NSString *logPath) {
+    NSFileManager *files = [NSFileManager defaultManager];
+    if ([[files attributesOfItemAtPath:logPath error:nil] fileSize] < kMaxLogBytes) return;
+    NSString *oldPath = [logPath stringByAppendingString:@".old"];
+    [files removeItemAtPath:oldPath error:nil];
+    [files moveItemAtPath:logPath toPath:oldPath error:nil];
+}
+
 static void logMsg(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
-    NSString *logDir = [NSString stringWithFormat:@"%s/Library/Logs", getenv("HOME")];
+    NSString *logDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs"];
     NSString *logPath = [logDir stringByAppendingPathComponent:@"proofd-service.log"];
+    keepOneOldLogIfFull(logPath);
     NSString *timestamp = [[NSDate date] description];
     NSString *line = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];

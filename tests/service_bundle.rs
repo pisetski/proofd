@@ -134,3 +134,12 @@ fn service_host_runs_the_bundled_cli() {
         "build.sh must copy the CLI to Contents/MacOS/{looked_up}, where ServiceHost.m looks for it"
     );
 }
+
+#[test]
+fn bundle_version_matches_the_crate() {
+    assert_eq!(
+        string(&info_plist(), "CFBundleShortVersionString"),
+        env!("CARGO_PKG_VERSION"),
+        "bump macos/Info.plist along with Cargo.toml"
+    );
+}

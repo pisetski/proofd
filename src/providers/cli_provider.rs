@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::OnceLock;
 use std::time::Instant;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{ChildStderr, Command};
 
 #[derive(Debug, Clone)]
 pub struct ClaudeCli {
@@ -15,18 +15,17 @@ pub struct ClaudeCli {
     pub bin: Option<String>,
 }
 
-#[async_trait::async_trait]
 impl Provider for ClaudeCli {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
-        let args = claude_args(&self.model, system);
-        let stdout = run_cli(
-            "claude",
-            self.bin.as_deref(),
-            &args,
-            &CLAUDE_ENV,
-            user,
-            cli_sandbox_dir().as_deref(),
-        )
+        let stdout = run_cli(CliRun {
+            name: "claude",
+            explicit_bin: self.bin.as_deref(),
+            args: &claude_args(&self.model, system),
+            env: &CLAUDE_ENV,
+            stdin_text: user,
+            cwd: cli_sandbox_dir().as_deref(),
+            fatal_stderr_line: no_fatal_stderr_line,
+        })
         .await?;
         sanitize_output(&stdout)
     }
@@ -56,55 +55,109 @@ fn claude_args(model: &str, system: &str) -> Vec<String> {
     .to_vec()
 }
 
-pub(super) async fn run_cli(
-    name: &str,
-    explicit_bin: Option<&str>,
-    args: &[String],
-    env: &[(&str, &str)],
-    stdin_text: &str,
-    cwd: Option<&Path>,
-) -> Result<String, ProviderError> {
+pub(super) struct CliRun<'a> {
+    pub name: &'a str,
+    pub explicit_bin: Option<&'a str>,
+    pub args: &'a [String],
+    pub env: &'a [(&'a str, &'a str)],
+    pub stdin_text: &'a str,
+    pub cwd: Option<&'a Path>,
+    pub fatal_stderr_line: fn(&str) -> Option<String>,
+}
+
+fn no_fatal_stderr_line(_line: &str) -> Option<String> {
+    None
+}
+
+pub(super) async fn run_cli(run: CliRun<'_>) -> Result<String, ProviderError> {
+    let name = run.name;
+    let transport =
+        |what: &str, e: std::io::Error| ProviderError::Transport(format!("{what}: {e}"));
     let total = Instant::now();
-    let bin = resolve_cli(explicit_bin, name)?;
+    let bin = resolve_cli(run.explicit_bin, name)?;
     let resolve_ms = total.elapsed().as_millis();
     let mut command = Command::new(&bin);
     command
-        .args(args)
-        .envs(env.iter().copied())
+        .args(run.args)
+        .envs(run.env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some(dir) = cwd {
+    if let Some(dir) = run.cwd {
         command.current_dir(dir);
     }
     let mut child = command
         .spawn()
-        .map_err(|e| ProviderError::Transport(format!("spawn {name} ({bin}): {e}")))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(stdin_text.as_bytes())
-            .await
-            .map_err(|e| ProviderError::Transport(format!("write {name} stdin: {e}")))?;
-    }
+        .map_err(|e| transport(&format!("spawn {name} ({bin})"), e))?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
+
+    let stdin_text = run.stdin_text;
     let wait = Instant::now();
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ProviderError::Transport(format!("wait {name}: {e}")))?;
+    let (_, stdout, stderr, status) = tokio::try_join!(
+        async move {
+            let written = stdin.write_all(stdin_text.as_bytes()).await;
+            drop(stdin);
+            match written {
+                Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+                    Err(transport(&format!("write {name} stdin"), e))
+                }
+                _ => Ok(()),
+            }
+        },
+        async {
+            let mut buf = Vec::new();
+            stdout
+                .read_to_end(&mut buf)
+                .await
+                .map_err(|e| transport(&format!("read {name} stdout"), e))?;
+            Ok(buf)
+        },
+        watch_stderr(name, stderr, run.fatal_stderr_line),
+        async {
+            child
+                .wait()
+                .await
+                .map_err(|e| transport(&format!("wait {name}"), e))
+        },
+    )?;
     tracing::debug!(
         "{name} timings resolve={resolve_ms}ms wait={}ms total={}ms",
         wait.elapsed().as_millis(),
         total.elapsed().as_millis(),
     );
-    if !output.status.success() {
-        return Err(ProviderError::Failed(exit_failure(
-            name,
-            output.status,
-            &String::from_utf8_lossy(&output.stderr),
-        )));
+    if !status.success() {
+        return Err(ProviderError::Failed(exit_failure(name, status, &stderr)));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
+}
+
+// Returning early drops the child, which kill_on_drop then stops.
+async fn watch_stderr(
+    name: &str,
+    stderr: ChildStderr,
+    fatal_stderr_line: fn(&str) -> Option<String>,
+) -> Result<String, ProviderError> {
+    let mut reader = BufReader::new(stderr);
+    let mut seen = String::new();
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = reader
+            .read_until(b'\n', &mut line)
+            .await
+            .map_err(|e| ProviderError::Transport(format!("read {name} stderr: {e}")))?;
+        if read == 0 {
+            return Ok(seen);
+        }
+        let text = String::from_utf8_lossy(&line);
+        if let Some(reason) = fatal_stderr_line(&text) {
+            return Err(ProviderError::Failed(format!("{name}: {reason}")));
+        }
+        seen.push_str(&text);
+    }
 }
 
 fn exit_failure(name: &str, status: ExitStatus, stderr: &str) -> String {

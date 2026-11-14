@@ -9,7 +9,6 @@ pub struct OpenAICompat {
     pub client: reqwest::Client,
 }
 
-#[async_trait::async_trait]
 impl Provider for OpenAICompat {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
         let total = Instant::now();

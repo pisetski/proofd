@@ -37,10 +37,10 @@ fn resolve_configured(expanded: &str) -> Result<String, ProviderError> {
 }
 
 fn expand_tilde(s: &str) -> String {
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest).display().to_string();
-        }
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).display().to_string();
     }
     s.to_string()
 }

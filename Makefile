@@ -24,6 +24,7 @@ uninstall:
 
 clear-logs:
 	: > $(SERVICE_LOG)
+	rm -f $(SERVICE_LOG).old
 
 # Services host log, plus AppKit's own messages for the host
 # (e.g. "Cannot find service provider"), which only reach the system log.

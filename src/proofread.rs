@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::prompt::build_revised_only;
-use crate::providers::{complete_with_timeout, strip_wrapping_fence, Provider};
+use crate::providers::{Provider, complete_with_timeout, strip_wrapping_fence};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -58,7 +58,6 @@ mod tests {
     use crate::providers::ProviderError;
 
     struct EchoProvider(String);
-    #[async_trait::async_trait]
     impl Provider for EchoProvider {
         async fn complete(&self, _s: &str, _u: &str) -> Result<String, ProviderError> {
             Ok(self.0.clone())
@@ -66,7 +65,6 @@ mod tests {
     }
 
     struct FailProvider;
-    #[async_trait::async_trait]
     impl Provider for FailProvider {
         async fn complete(&self, _s: &str, _u: &str) -> Result<String, ProviderError> {
             Err(ProviderError::Failed("boom".into()))

@@ -34,6 +34,7 @@ impl std::fmt::Display for ProviderKind {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub provider: ProviderKind,
@@ -175,10 +176,10 @@ fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> 
     if cfg.max_input_chars == 0 {
         return Err(invalid("`max_input_chars` must be > 0"));
     }
-    if let Some(bin) = cfg.provider_bin.as_ref() {
-        if bin.trim().is_empty() {
-            return Err(invalid("`provider_bin` must not be empty"));
-        }
+    if let Some(bin) = cfg.provider_bin.as_ref()
+        && bin.trim().is_empty()
+    {
+        return Err(invalid("`provider_bin` must not be empty"));
     }
     if cfg.provider == ProviderKind::OpenAICompat {
         match &cfg.base_url {
@@ -265,6 +266,14 @@ max_input_chars = 2000
             .unwrap_err()
             .to_string();
         assert!(err.contains("base_url"), "got: {err}");
+    }
+
+    #[test]
+    fn misspelled_key_is_rejected_instead_of_ignored() {
+        let err = parse_toml("modle = \"sonnet\"", "p")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `modle`"), "got: {err}");
     }
 
     #[test]

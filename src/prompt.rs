@@ -18,10 +18,10 @@ If the text is already clean, return the input verbatim."#;
 
 pub fn load_skill() -> String {
     for path in skill_candidate_paths() {
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if !contents.trim().is_empty() {
-                return contents;
-            }
+        if let Ok(contents) = std::fs::read_to_string(&path)
+            && !contents.trim().is_empty()
+        {
+            return contents;
         }
     }
     EMBEDDED_SKILL.to_string()

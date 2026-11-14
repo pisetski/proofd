@@ -419,9 +419,16 @@ impl Drop for KillOnDrop {
     }
 }
 
-// The service host sends SIGTERM at its deadline, when a slow provider is still running.
+// The service host sends SIGTERM at its deadline, when a slow provider is still running;
+// in a terminal, Ctrl-C sends SIGINT.
 #[test]
-fn sigterm_stops_the_provider_and_still_deletes_its_session() {
+fn sigterm_and_sigint_stop_the_provider_and_still_delete_its_session() {
+    for signal in ["TERM", "INT"] {
+        stops_the_provider_and_still_deletes_its_session(signal);
+    }
+}
+
+fn stops_the_provider_and_still_deletes_its_session(signal: &str) {
     let sandbox = opencode_sandbox(
         "echo $$ > \"$HOME/provider.pid\"\n  exec sleep 30",
         "timeout_secs = 60",
@@ -436,13 +443,13 @@ fn sigterm_stops_the_provider_and_still_deletes_its_session() {
         "provider never started"
     );
     let provider = KillOnDrop(read_pid().trim().to_string());
-    send_signal("-TERM", &proofd.id().to_string());
+    send_signal(&format!("-{signal}"), &proofd.id().to_string());
 
     let out = proofd.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(text(&out.stdout), "");
     assert!(
-        text(&out.stderr).ends_with("proofd: stopped by SIGTERM\n"),
+        text(&out.stderr).ends_with(&format!("proofd: stopped by SIG{signal}\n")),
         "stderr: {}",
         text(&out.stderr)
     );
@@ -452,6 +459,38 @@ fn sigterm_stops_the_provider_and_still_deletes_its_session() {
         provider.0
     );
     assert_eq!(deleted_sessions(&sandbox), vec!["ses_proofd".to_string()]);
+}
+
+// opencode retries a rejected request without printing anything, so only its error log
+// tells a spent quota apart from a slow model.
+#[test]
+fn opencode_stream_error_fails_at_once_with_its_reason() {
+    let sandbox = opencode_sandbox(
+        r#"cat >/dev/null
+  echo 'timestamp=2026-11-14T15:17:58.057Z level=ERROR message="stream error" agent=proofd error.error="AI_APICallError: Free usage limit reached."' >&2
+  exec sleep 30"#,
+        "timeout_secs = 20",
+    );
+
+    let started = std::time::Instant::now();
+    let out = sandbox.proofread("some text");
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "waited {:?} for the timeout",
+        started.elapsed()
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "");
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.ends_with("opencode: AI_APICallError: Free usage limit reached.\n"),
+        "stderr: {stderr}"
+    );
+    assert_eq!(pill_reason(&out), "Provider error");
+    let args = lines(sandbox.path("args.txt"));
+    assert!(args.contains(&"--print-logs".to_string()), "args: {args:?}");
+    assert!(has_pair(&args, "--log-level", "ERROR"), "args: {args:?}");
 }
 
 #[test]
@@ -629,14 +668,28 @@ fn service_failure_reasons_match_proofd_errors() {
             "Provider error",
         ),
         (
-            Sandbox::with_provider_script("cat >/dev/null\necho 'model \"x\" not found' >&2\nexit 1"),
+            Sandbox::with_provider_script(
+                "cat >/dev/null\necho 'model \"x\" not found' >&2\nexit 1",
+            ),
             "some text",
             "Provider error",
         ),
-        (Sandbox::with_config("timeout_secs = 0"), "some text", "Check proofd config"),
+        (
+            Sandbox::with_config("timeout_secs = 0"),
+            "some text",
+            "Check proofd config",
+        ),
         (unreadable_config, "some text", "Check proofd config"),
-        (Sandbox::with_config("max_input_chars = 3"), "some text", "Selection too long"),
-        (Sandbox::with_provider_script("touch \"$HOME/called\""), "  \n ", "No text selected"),
+        (
+            Sandbox::with_config("max_input_chars = 3"),
+            "some text",
+            "Selection too long",
+        ),
+        (
+            Sandbox::with_provider_script("touch \"$HOME/called\""),
+            "  \n ",
+            "No text selected",
+        ),
         (
             Sandbox::with_provider_script("cat >/dev/null\necho '   '"),
             "some text",

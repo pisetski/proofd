@@ -63,10 +63,11 @@ Gemma 4 spends most of its time reasoning; a model without reasoning is
 faster.
 
 proofd uses `claude` with Haiku by default. If only `opencode` is installed,
-it uses DeepSeek V4.1 Flash Free, which is free for a limited time and whose
-provider
+it uses DeepSeek V4.1 Flash Free, which is free for a limited time, up to a
+usage limit, and whose provider
 [keeps no data and doesn't train on it](https://opencode.ai/docs/zen/#privacy).
-When it stops being free, set `model` to another one.
+Once you reach the limit, proofd shows opencode's error; set `model` to
+another one.
 
 To use a local model, start the server in [LM Studio](https://lmstudio.ai),
 then create `~/.config/proofd/config.toml`:
@@ -97,6 +98,14 @@ To change the prompt, copy `skills/proofread.md` to
 echo "helo world" | proofd
 ```
 
+## Why a language model?
+
+Rule-based checkers like Harper, LanguageTool, and the macOS spellchecker are
+faster and run offline, but they miss errors that need context, like "their"
+for "they're" or a verb that doesn't agree with a distant subject. A model
+catches those, in any language it knows. It can also miss or invent a fix, so
+read the result; in most apps, ⌘Z undoes it.
+
 ## Why not Apple's Writing Tools?
 
 Writing Tools needs Apple Intelligence, which runs only on Apple silicon and
@@ -109,8 +118,8 @@ the model you pick, follows a prompt you can edit, and works in the terminal.
 make uninstall
 ```
 
-This keeps your config in `~/.config/proofd` and the log in
-`~/Library/Logs/proofd-service.log`.
+This keeps your config in `~/.config/proofd` and the logs in
+`~/Library/Logs/proofd-service.log*`.
 
 ## License
 

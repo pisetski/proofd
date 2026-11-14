@@ -1,9 +1,9 @@
 use proofd_lib::proofread::proofread_text;
-use proofd_lib::providers::{forget_sessions, from_config, FORGET_SESSIONS_FLAG};
+use proofd_lib::providers::{FORGET_SESSIONS_FLAG, forget_sessions, from_config};
 use proofd_lib::{config, prompt};
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -63,13 +63,16 @@ fn print_help() {
     println!("Both are optional; see https://github.com/pisetski/proofd#configure");
 }
 
-// The service host sends SIGTERM at its deadline. Dropping the proofread kills the
-// provider CLI and deletes its opencode session, which dying on the signal would skip.
+// The service host sends SIGTERM at its deadline, and Ctrl-C sends SIGINT. Dropping the
+// proofread kills the provider CLI and deletes its opencode session, which dying on the
+// signal would skip.
 async fn proofread_until_terminated() -> Outcome {
     let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
     tokio::select! {
         outcome = proofread() => outcome,
         _ = terminate.recv() => Err("stopped by SIGTERM".into()),
+        _ = interrupt.recv() => Err("stopped by SIGINT".into()),
     }
 }
 

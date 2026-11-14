@@ -8,10 +8,10 @@ use crate::config::{Config, ProviderKind};
 use std::time::Duration;
 use thiserror::Error;
 
-pub use cli_provider::{cli_sandbox_dir, ClaudeCli};
+pub use cli_provider::{ClaudeCli, cli_sandbox_dir};
 pub use cli_resolver::resolve_cli;
 pub use openai_compat::OpenAICompat;
-pub use opencode::{forget_sessions, OpencodeCli, FORGET_SESSIONS_FLAG};
+pub use opencode::{FORGET_SESSIONS_FLAG, OpencodeCli, forget_sessions};
 pub use sanitize::{sanitize_output, strip_wrapping_fence};
 
 #[derive(Debug, Error)]
@@ -26,9 +26,12 @@ pub enum ProviderError {
     Transport(String),
 }
 
-#[async_trait::async_trait]
 pub trait Provider: Send + Sync {
-    async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError>;
+    fn complete(
+        &self,
+        system: &str,
+        user: &str,
+    ) -> impl Future<Output = Result<String, ProviderError>> + Send;
 }
 
 pub fn from_config(cfg: &Config) -> ProviderImpl {
@@ -56,7 +59,6 @@ pub enum ProviderImpl {
     OpenAI(OpenAICompat),
 }
 
-#[async_trait::async_trait]
 impl Provider for ProviderImpl {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
         match self {
@@ -83,7 +85,6 @@ mod tests {
     use super::*;
 
     struct SlowProvider;
-    #[async_trait::async_trait]
     impl Provider for SlowProvider {
         async fn complete(&self, _s: &str, _u: &str) -> Result<String, ProviderError> {
             tokio::time::sleep(Duration::from_millis(300)).await;
@@ -92,7 +93,6 @@ mod tests {
     }
 
     struct EchoProvider(String);
-    #[async_trait::async_trait]
     impl Provider for EchoProvider {
         async fn complete(&self, _s: &str, _u: &str) -> Result<String, ProviderError> {
             Ok(self.0.clone())
