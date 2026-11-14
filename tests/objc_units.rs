@@ -42,3 +42,18 @@ fn restyle_keeps_formatting_through_fixes() {
 fn selection_leaves_out_what_the_app_added() {
     compile_and_run(&["Selection.m"], "selection_test");
 }
+
+#[test]
+fn service_host_compiles_without_warnings() {
+    let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("macos/ServiceHost.m");
+    let checked = Command::new("clang")
+        .args(["-fsyntax-only", "-fobjc-arc", "-Wall", "-Werror"])
+        .arg(&host)
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+}

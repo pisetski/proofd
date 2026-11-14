@@ -76,6 +76,12 @@ int main(void) {
         expect([[restyled attribute:NSFontAttributeName atIndex:4999 effectiveRange:nil] isEqual:boldFont()],
                @"a full rewrite still carries the original style");
 
+        NSDictionary *bigStyle = @{NSFontAttributeName: [NSFont systemFontOfSize:20]};
+        NSAttributedString *emoji = revisedTextStyledLike(
+            styledText(@[@"a ", plainStyle(), @"!", boldStyle(), @"?", bigStyle, @" b", plainStyle()]), @"a 😀 b");
+        expect([[emoji attributesAtIndex:2 effectiveRange:nil] isEqual:[emoji attributesAtIndex:3 effectiveRange:nil]],
+               @"an emoji's two UTF-16 halves share one style");
+
         expectStyled(revisedTextStyledLike(styledText(@[@"x", boldStyle()]), @""), [[NSAttributedString alloc] initWithString:@""],
                      @"empty revised text is empty");
 

@@ -7,7 +7,9 @@ Fix typos and grammar in place, in any macOS app with a Services menu.
 Select text, then right-click › Services › Proofread Selection, or press a
 shortcut you assign. proofd fixes errors only, and keeps your tone, language,
 and Markdown. In rich text it keeps bold, italics, and links: a fixed word takes
-the style of the word it replaces.
+the style of the word it replaces. When a selection mixes styles, its text in
+the system font comes back as Helvetica Neue, the font macOS names it when
+passing styled text between apps.
 
 It runs through the `claude` or `opencode` CLI you already use, or a local
 model, so you need no new account or API key.

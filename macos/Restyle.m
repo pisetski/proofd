@@ -21,15 +21,18 @@ static NSData *charactersOf(NSString *text) {
     return chars;
 }
 
-static NSData *wordsAndSymbols(NSData *chars) {
+// Words, and single characters otherwise: an emoji is one token, not two UTF-16 halves.
+static NSData *wordsAndSymbols(NSString *text, NSData *chars) {
     const unichar *units = chars.bytes;
     NSUInteger length = chars.length / sizeof(unichar);
     NSCharacterSet *wordCharacters = [NSCharacterSet alphanumericCharacterSet];
     NSMutableData *tokens = [NSMutableData data];
     for (NSUInteger start = 0, end; start < length; start = end) {
-        end = start + 1;
         if ([wordCharacters characterIsMember:units[start]]) {
+            end = start + 1;
             while (end < length && [wordCharacters characterIsMember:units[end]]) end++;
+        } else {
+            end = NSMaxRange([text rangeOfComposedCharacterSequenceAtIndex:start]);
         }
         Token token = {start, end - start};
         [tokens appendBytes:&token length:sizeof token];
@@ -133,7 +136,8 @@ NSAttributedString *revisedTextStyledLike(NSAttributedString *original, NSString
     if (originalLength == 0 || revisedLength == 0) return [[NSAttributedString alloc] initWithString:revised];
 
     NSData *originalChars = charactersOf(original.string), *revisedChars = charactersOf(revised);
-    NSData *originalTokens = wordsAndSymbols(originalChars), *revisedTokens = wordsAndSymbols(revisedChars);
+    NSData *originalTokens = wordsAndSymbols(original.string, originalChars);
+    NSData *revisedTokens = wordsAndSymbols(revised, revisedChars);
     Tokens before = tokensOf(originalChars, originalTokens), after = tokensOf(revisedChars, revisedTokens);
 
     NSMutableData *sourceData = [NSMutableData dataWithLength:revisedLength * sizeof(NSUInteger)];
@@ -151,6 +155,7 @@ NSAttributedString *revisedTextStyledLike(NSAttributedString *original, NSString
         NSDictionary *attributes = [original attributesAtIndex:sourceOf[start] effectiveRange:&run];
         end = start + 1;
         while (end < revisedLength && NSLocationInRange(sourceOf[end], run)) end++;
+        end = NSMaxRange([revised rangeOfComposedCharacterSequencesForRange:NSMakeRange(start, end - start)]);
         [styled setAttributes:attributes range:NSMakeRange(start, end - start)];
     }
     return styled;

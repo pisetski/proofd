@@ -26,6 +26,7 @@ clang "$SCRIPT_DIR/ServiceHost.m" "$SCRIPT_DIR/Restyle.m" "$SCRIPT_DIR/Selection
     -framework Foundation \
     -framework Symbols \
     -fobjc-arc \
+    -Wall \
     -mmacosx-version-min=14.0
 cp "$REPO_ROOT/target/release/proofd" "$BIN_DIR/proofd"
 cp "$SCRIPT_DIR/Info.plist" "$APP/Contents/Info.plist"
