@@ -34,6 +34,15 @@ static const NSTimeInterval kFailureHold = 2.5;
 
 static const NSTimeInterval kDefaultServicesTimeout = 30;
 static const NSTimeInterval kServicesTimeoutMargin = 1;
+static const NSTimeInterval kTerminateGrace = 0.5;
+
+// Spins the run loop, not a blocking wait, so the indicator keeps animating and following the cursor.
+static BOOL waitForExit(NSTask *task, NSDate *deadline) {
+    while (task.isRunning && deadline.timeIntervalSinceNow > 0) {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    return !task.isRunning;
+}
 
 static NSTimeInterval servicesTimeout(void) {
     NSArray *services = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSServices"];
@@ -336,12 +345,25 @@ static __weak CursorBusyIndicator *visibleIndicator;
         [stdinHandle closeAndReturnError:nil];
     });
 
+    // Drained while proofd runs: output larger than the pipe buffer (64 KB) would block it until the deadline.
+    __block NSData *outputData = nil;
+    __block NSData *errData = nil;
+    dispatch_group_t drained = dispatch_group_create();
+    dispatch_queue_t readQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    dispatch_group_async(drained, readQueue, ^{
+        outputData = [outputPipe.fileHandleForReading readDataToEndOfFile];
+    });
+    dispatch_group_async(drained, readQueue, ^{
+        errData = [errorPipe.fileHandleForReading readDataToEndOfFile];
+    });
+
     NSDate *deadline = [started dateByAddingTimeInterval:servicesTimeout() - kServicesTimeoutMargin];
-    while (task.isRunning && deadline.timeIntervalSinceNow > 0) {
-        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    }
-    if (task.isRunning) {
+    if (!waitForExit(task, deadline)) {
+        // proofd stops its provider on SIGTERM, but a blocking read or DNS lookup can delay it past the caller's patience.
         [task terminate];
+        if (!waitForExit(task, [NSDate dateWithTimeIntervalSinceNow:kTerminateGrace])) {
+            kill(task.processIdentifier, SIGKILL);
+        }
         [task waitUntilExit];
         [busyIndicator finishWithFailure:@"Timed out"];
         logMsg(@"proofd stopped after %.0fms: the calling app stops waiting at the services timeout",
@@ -351,7 +373,14 @@ static __weak CursorBusyIndicator *visibleIndicator;
     }
     logMsg(@"proofd exited %ld after %.0fms", (long)[task terminationStatus], -[started timeIntervalSinceNow] * 1000);
 
-    NSData *errData = [[errorPipe fileHandleForReading] readDataToEndOfFile];
+    // A process proofd started could inherit the pipes and keep them open after proofd exits.
+    int64_t drainBudget = (int64_t)(MAX(deadline.timeIntervalSinceNow, 0) * NSEC_PER_SEC);
+    if (dispatch_group_wait(drained, dispatch_time(DISPATCH_TIME_NOW, drainBudget)) != 0) {
+        [busyIndicator finishWithFailure:@"Proofread failed"];
+        logMsg(@"proofd exited but its output pipes stayed open");
+        if (error) *error = @"proofd output never finished";
+        return;
+    }
     NSString *errMsg = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
     if (errMsg.length > 0) {
         logMsg(@"proofd stderr:\n%@", errMsg);
@@ -366,7 +395,6 @@ static __weak CursorBusyIndicator *visibleIndicator;
         return;
     }
 
-    NSData *outputData = [[outputPipe fileHandleForReading] readDataToEndOfFile];
     NSString *result = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
     if (!result) {
         [busyIndicator finishWithFailure:@"Proofread failed"];
@@ -391,8 +419,6 @@ static __weak CursorBusyIndicator *visibleIndicator;
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     logMsg(@"App launching, registering service provider");
     NSRegisterServicesProvider([[ProofreadService alloc] init], @"proofd");
-    // Stay running; service invocations are handled while app runs
-    // App is terminated by user or system when no longer needed
 }
 @end
 
