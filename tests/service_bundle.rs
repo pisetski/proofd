@@ -101,13 +101,26 @@ fn port_name_matches_registered_provider() {
 }
 
 #[test]
-fn service_sends_and_returns_plain_text() {
+fn service_sends_and_returns_plain_and_rich_text() {
     let service = proofread_service();
     for key in ["NSSendTypes", "NSReturnTypes"] {
         let types = strings(&service, key);
+        for wanted in ["NSStringPboardType", "NSRTFPboardType"] {
+            assert!(
+                types.iter().any(|t| t == wanted),
+                "{key} must include {wanted}, got {types:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn build_compiles_every_host_source() {
+    let build = read("macos/build.sh");
+    for source in ["ServiceHost.m", "Restyle.m"] {
         assert!(
-            types.iter().any(|t| t == "NSStringPboardType"),
-            "{key} must include NSStringPboardType, got {types:?}"
+            build.contains(&format!("\"$SCRIPT_DIR/{source}\"")),
+            "build.sh must compile {source}"
         );
     }
 }

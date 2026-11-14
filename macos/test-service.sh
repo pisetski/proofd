@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end smoke test for the installed "Proofread Selection" service.
+# End-to-end smoke test for the installed "Proofread Selection" service, with plain and rich text.
 # Needs a logged-in GUI session, an installed app (make install) and a
 # working provider in ~/.config/proofd/config.toml, so it is not part of CI.
 
@@ -65,3 +65,16 @@ if [[ $STATUS -ne 0 ]]; then
     fail "text was not proofread (exit $STATUS): '$OUTPUT'"
 fi
 pass "proofread: '$INPUT' -> '$OUTPUT'"
+
+LOG_OFFSET=$(($(wc -c <"$SERVICE_LOG") + 1))
+set +e
+OUTPUT="$("$TMPDIR/perform_service" --rich "$INPUT")"
+STATUS=$?
+set -e
+if [[ $STATUS -ne 0 ]]; then
+    echo "service log:" >&2
+    tail -c +"$LOG_OFFSET" "$SERVICE_LOG" >&2
+    [[ $STATUS -eq 3 ]] && fail "rich text came back without its bold: '$OUTPUT'"
+    fail "rich text was not proofread (exit $STATUS): '$OUTPUT'"
+fi
+pass "kept bold through: '$INPUT' -> '$OUTPUT'"

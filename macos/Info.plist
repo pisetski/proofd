@@ -40,10 +40,12 @@
 			<string>proofd</string>
 			<key>NSSendTypes</key>
 			<array>
+				<string>NSRTFPboardType</string>
 				<string>NSStringPboardType</string>
 			</array>
 			<key>NSReturnTypes</key>
 			<array>
+				<string>NSRTFPboardType</string>
 				<string>NSStringPboardType</string>
 			</array>
 		</dict>

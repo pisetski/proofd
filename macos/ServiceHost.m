@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import "Restyle.h"
 
 static const unsigned long long kMaxLogBytes = 1024 * 1024;
 
@@ -311,13 +312,15 @@ static __weak CursorBusyIndicator *visibleIndicator;
 - (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
     logMsg(@"Service invoked");
 
-    NSString *text = [pasteboard stringForType:NSPasteboardTypeString];
+    NSData *rtf = [pasteboard dataForType:NSPasteboardTypeRTF];
+    NSAttributedString *styled = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
+    NSString *text = styled ? styled.string : [pasteboard stringForType:NSPasteboardTypeString];
     if (!text || text.length == 0) {
         logMsg(@"No text on pasteboard");
         if (error) *error = @"No text to proofread";
         return;
     }
-    logMsg(@"Got text (%lu chars)", (unsigned long)text.length);
+    logMsg(@"Got %@ text (%lu chars)", styled ? @"rich" : @"plain", (unsigned long)text.length);
 
     CursorBusyIndicator *busyIndicator = [[CursorBusyIndicator alloc] init];
 
@@ -419,7 +422,18 @@ static __weak CursorBusyIndicator *visibleIndicator;
     logMsg(@"Got result (%lu chars)", (unsigned long)result.length);
     [busyIndicator finishWithSuccess];
 
-    [pasteboard clearContents];
+    NSData *restyledRTF = nil;
+    if (styled) {
+        NSAttributedString *restyled = revisedTextStyledLike(styled, result);
+        restyledRTF = [restyled RTFFromRange:NSMakeRange(0, restyled.length)
+                          documentAttributes:@{NSDocumentTypeDocumentAttribute: NSRTFTextDocumentType}];
+    }
+    if (restyledRTF) {
+        [pasteboard declareTypes:@[NSPasteboardTypeRTF, NSPasteboardTypeString] owner:nil];
+        [pasteboard setData:restyledRTF forType:NSPasteboardTypeRTF];
+    } else {
+        [pasteboard declareTypes:@[NSPasteboardTypeString] owner:nil];
+    }
     [pasteboard setString:result forType:NSPasteboardTypeString];
     logMsg(@"Wrote result back to pasteboard");
 }

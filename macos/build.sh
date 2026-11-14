@@ -20,7 +20,7 @@ APP="$BUILD_DIR/$APP_NAME"
 BIN_DIR="$APP/Contents/MacOS"
 mkdir -p "$BIN_DIR"
 
-clang "$SCRIPT_DIR/ServiceHost.m" \
+clang "$SCRIPT_DIR/ServiceHost.m" "$SCRIPT_DIR/Restyle.m" \
     -o "$BIN_DIR/proofd-service-host" \
     -framework AppKit \
     -framework Foundation \
