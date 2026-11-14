@@ -1,97 +1,38 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import "BusyIndicator.h"
 #import "Restyle.h"
 #import "Selection.h"
-
-static const unsigned long long kMaxLogBytes = 1024 * 1024;
-
-static void keepOneOldLogIfFull(NSString *logPath) {
-    NSFileManager *files = [NSFileManager defaultManager];
-    if ([[files attributesOfItemAtPath:logPath error:nil] fileSize] < kMaxLogBytes) return;
-    NSString *oldPath = [logPath stringByAppendingString:@".old"];
-    [files removeItemAtPath:oldPath error:nil];
-    [files moveItemAtPath:logPath toPath:oldPath error:nil];
-}
-
-static void logMsg(NSString *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
-    va_end(args);
-    NSString *logDir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs"];
-    NSString *logPath = [logDir stringByAppendingPathComponent:@"proofd-service.log"];
-    keepOneOldLogIfFull(logPath);
-    NSString *timestamp = [[NSDate date] description];
-    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg];
-    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:logPath];
-    if (!fh) {
-        [[NSFileManager defaultManager] createDirectoryAtPath:logDir withIntermediateDirectories:YES attributes:nil error:nil];
-        [data writeToFile:logPath atomically:YES];
-    } else {
-        [fh seekToEndOfFile];
-        [fh writeData:data];
-        [fh closeFile];
-    }
-}
-
-static const CGFloat kIndicatorSize = 30;
-static const CGFloat kIndicatorCursorOffset = 14;
-static const CGFloat kPillPadding = 10;
-static const CGFloat kPillSymbolGap = 5;
-static const NSTimeInterval kFadeIn = 0.15;
-static const NSTimeInterval kCrossfade = 0.12;
-static const NSTimeInterval kFadeOut = 0.25;
-static const NSTimeInterval kSuccessHold = 0.8;
-static const NSTimeInterval kFailureHold = 2.5;
+#import "ServiceLog.h"
 
 static const NSTimeInterval kDefaultServicesTimeout = 30;
 static const NSTimeInterval kServicesTimeoutMargin = 1;
 static const NSTimeInterval kTerminateGrace = 0.5;
+static const NSTimeInterval kRunLoopSlice = 0.05;
+static NSString *const kGenericFailureReason = @"Proofread failed";
+static NSString *const kProofdErrorPrefix = @"proofd: ";
 
-// Spins the run loop, not a blocking wait, so the indicator keeps animating and following the cursor.
-static BOOL waitForExit(NSTask *task, NSDate *deadline) {
-    while (task.isRunning && deadline.timeIntervalSinceNow > 0) {
-        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    }
-    return !task.isRunning;
-}
-
-static NSTimeInterval servicesTimeout(void) {
+static NSTimeInterval servicesTimeoutFromInfoPlist(void) {
     NSArray *services = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSServices"];
     id milliseconds = [services.firstObject objectForKey:@"NSTimeout"];
     return milliseconds ? [milliseconds doubleValue] / 1000 : kDefaultServicesTimeout;
 }
 
-static NSPoint indicatorOriginNearCursor(NSSize size) {
-    NSPoint cursor = [NSEvent mouseLocation];
-    NSPoint origin = NSMakePoint(cursor.x + kIndicatorCursorOffset,
-                                 cursor.y - kIndicatorCursorOffset - size.height);
-    for (NSScreen *screen in [NSScreen screens]) {
-        if (!NSMouseInRect(cursor, screen.frame, NO)) continue;
-        NSRect bounds = screen.visibleFrame;
-        if (origin.x + size.width > NSMaxX(bounds)) origin.x = cursor.x - kIndicatorCursorOffset - size.width;
-        if (origin.y < NSMinY(bounds)) origin.y = cursor.y + kIndicatorCursorOffset;
-        origin.x = MIN(MAX(origin.x, NSMinX(bounds)), NSMaxX(bounds) - size.width);
-        origin.y = MIN(MAX(origin.y, NSMinY(bounds)), NSMaxY(bounds) - size.height);
-        break;
-    }
-    return origin;
+static double millisecondsSince(NSDate *start) {
+    return -[start timeIntervalSinceNow] * 1000;
 }
 
-static void centerInLeadingSquare(NSView *view) {
-    [view setFrameOrigin:NSMakePoint((kIndicatorSize - NSWidth(view.frame)) / 2,
-                                     (kIndicatorSize - NSHeight(view.frame)) / 2)];
-}
-
-// Matches only proofd's fixed error prefixes: the rest of the line can quote the provider's
-// own output (e.g. an HTTP "404 Not Found" body), which must not pick the reason.
-// tests/proofread_cli.rs parses this table and checks it against real proofd errors.
-static NSString *shortFailureReason(NSString *proofdStderr) {
+static NSString *lastProofdErrorMessage(NSString *proofdStderr) {
     NSString *message = @"";
     for (NSString *line in [proofdStderr componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
-        if ([line hasPrefix:@"proofd: "]) message = [line substringFromIndex:@"proofd: ".length];
+        if ([line hasPrefix:kProofdErrorPrefix]) message = [line substringFromIndex:kProofdErrorPrefix.length];
     }
+    return message;
+}
+
+static NSString *pillReasonForProofdError(NSString *proofdStderr) {
+    NSString *message = lastProofdErrorMessage(proofdStderr);
+    // Prefixes only: the rest of a line can quote the provider's output. tests/proofread_cli.rs parses this table.
     NSArray<NSArray<NSString *> *> *reasons = @[
         @[@"provider error: provider timed out", @"Timed out"],
         @[@"provider error: transport error: provider_bin", @"Can't start provider"],
@@ -103,206 +44,209 @@ static NSString *shortFailureReason(NSString *proofdStderr) {
         @[@"input too large", @"Selection too long"],
         @[@"no text to proofread", @"No text selected"],
         @[@"provider returned empty output", @"Empty response"],
-        @[@"provider error: provider returned empty output", @"Empty response"],
     ];
     for (NSArray<NSString *> *reason in reasons) {
         if ([message hasPrefix:reason[0]]) return reason[1];
     }
-    return @"Proofread failed";
+    return kGenericFailureReason;
 }
 
-static NSPanel *makeIndicatorPanel(void) {
-    NSSize size = NSMakeSize(kIndicatorSize, kIndicatorSize);
-    NSPanel *panel = [[NSPanel alloc] initWithContentRect:(NSRect){indicatorOriginNearCursor(size), size}
-                                                styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-                                                  backing:NSBackingStoreBuffered
-                                                    defer:NO];
-    panel.releasedWhenClosed = NO;
-    panel.level = NSPopUpMenuWindowLevel;
-    panel.opaque = NO;
-    panel.backgroundColor = [NSColor clearColor];
-    panel.hasShadow = YES;
-    panel.ignoresMouseEvents = YES;
-    panel.hidesOnDeactivate = NO;
-    panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                               NSWindowCollectionBehaviorFullScreenAuxiliary |
-                               NSWindowCollectionBehaviorStationary;
-    return panel;
-}
-
-static NSColor *appearanceColor(NSColor *light, NSColor *dark) {
-    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
-        BOOL isDark = [[appearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]]
-            isEqualToString:NSAppearanceNameDarkAqua];
-        return isDark ? dark : light;
-    }];
-}
-
-@interface BadgeView : NSView
+@interface ProofreadFailure : NSObject
+@property (readonly) NSString *pillReason;
+@property (readonly) NSString *serviceError;
 @end
 
-@implementation BadgeView
+@implementation ProofreadFailure
 
-- (BOOL)isOpaque {
-    return NO;
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    static const CGFloat rimWidth = 0.5;
-    NSRect shape = NSInsetRect(self.bounds, rimWidth / 2, rimWidth / 2);
-    CGFloat radius = NSHeight(shape) / 2;
-    NSBezierPath *capsule = [NSBezierPath bezierPathWithRoundedRect:shape xRadius:radius yRadius:radius];
-    [appearanceColor([NSColor whiteColor], [NSColor colorWithWhite:0.2 alpha:1]) setFill];
-    [capsule fill];
-    capsule.lineWidth = rimWidth;
-    [appearanceColor([NSColor colorWithWhite:0 alpha:0.12], [NSColor colorWithWhite:1 alpha:0.16]) setStroke];
-    [capsule stroke];
++ (instancetype)failureWithPillReason:(NSString *)pillReason serviceError:(NSString *)serviceError {
+    ProofreadFailure *failure = [[self alloc] init];
+    failure->_pillReason = pillReason;
+    failure->_serviceError = serviceError;
+    return failure;
 }
 
 @end
 
-static NSImageView *makeOutcomeSymbol(BOOL success) {
-    NSString *name = success ? @"checkmark" : @"exclamationmark.triangle.fill";
-    NSString *description = success ? @"Proofread" : @"Proofreading failed";
-    NSImageView *symbol = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:name
-                                                                     accessibilityDescription:description]];
-    symbol.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightSemibold];
-    symbol.contentTintColor = success ? [NSColor systemGreenColor] : [NSColor systemOrangeColor];
-    [symbol sizeToFit];
-    centerInLeadingSquare(symbol);
-    return symbol;
+static NSDictionary<NSString *, NSString *> *environmentLoggingAtInfo(void) {
+    NSMutableDictionary *environment = [[[NSProcessInfo processInfo] environment] mutableCopy];
+    if (!environment[@"RUST_LOG"]) environment[@"RUST_LOG"] = @"info";
+    return environment;
 }
 
-static NSTextField *makeReasonLabel(NSString *reason) {
-    NSTextField *label = [NSTextField labelWithString:reason];
-    label.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
-    label.textColor = [NSColor labelColor];
-    [label sizeToFit];
-    return label;
-}
-
-static NSSize layOutPill(NSImageView *symbol, NSTextField *label) {
-    CGFloat textInset = (NSWidth(label.frame) - ceil(label.attributedStringValue.size.width)) / 2;
-    [symbol setFrameOrigin:NSMakePoint(kPillPadding, NSMinY(symbol.frame))];
-    [label setFrameOrigin:NSMakePoint(NSMaxX(symbol.frame) + kPillSymbolGap - textInset,
-                                      (kIndicatorSize - NSHeight(label.frame)) / 2)];
-    return NSMakeSize(NSMaxX(label.frame) - textInset + kPillPadding, kIndicatorSize);
-}
-
-@interface CursorBusyIndicator : NSObject
-- (void)finishWithSuccess;
-- (void)finishWithFailure:(NSString *)reason;
+@interface ProofdProcess : NSObject
+@property (readonly, nullable) NSString *outputText;
+@property (readonly, nullable) NSString *errorText;
+@property (readonly) long exitStatus;
 @end
 
-@implementation CursorBusyIndicator {
-    NSPanel *_panel;
-    BadgeView *_badge;
-    NSProgressIndicator *_spinner;
-    NSTimer *_followCursor;
-    BOOL _closed;
+@implementation ProofdProcess {
+    NSTask *_task;
+    NSPipe *_inputPipe;
+    NSPipe *_outputPipe;
+    NSPipe *_errorPipe;
+    dispatch_group_t _outputDrained;
+    NSData *_outputData;
+    NSData *_errorData;
 }
 
-static __weak CursorBusyIndicator *visibleIndicator;
-
-- (instancetype)init {
+- (instancetype)initWithExecutable:(NSString *)path {
     if (!(self = [super init])) return nil;
-    [visibleIndicator close];
-    visibleIndicator = self;
-    _panel = makeIndicatorPanel();
-    _badge = [[BadgeView alloc] initWithFrame:NSMakeRect(0, 0, kIndicatorSize, kIndicatorSize)];
-    _badge.wantsLayer = YES;
-    _spinner = [[NSProgressIndicator alloc] init];
-    _spinner.style = NSProgressIndicatorStyleSpinning;
-    _spinner.controlSize = NSControlSizeSmall;
-    _spinner.usesThreadedAnimation = YES;
-    [_spinner sizeToFit];
-    centerInLeadingSquare(_spinner);
-    [_badge addSubview:_spinner];
-    _panel.contentView = _badge;
-    [_spinner startAnimation:nil];
-    [self redrawShadow];
-
-    _panel.alphaValue = 0;
-    [_panel orderFrontRegardless];
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-        context.duration = kFadeIn;
-        self->_panel.animator.alphaValue = 1;
-    }];
-
-    NSPanel *panel = _panel;
-    // A timer, not a mouse-moved monitor: the service method spins the run loop while proofd runs but never dispatches events.
-    _followCursor = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60
-                                                    repeats:YES
-                                                      block:^(NSTimer *timer) {
-        NSPoint origin = indicatorOriginNearCursor(panel.frame.size);
-        if (!NSEqualPoints(origin, panel.frame.origin)) [panel setFrameOrigin:origin];
-    }];
+    _inputPipe = [NSPipe pipe];
+    _outputPipe = [NSPipe pipe];
+    _errorPipe = [NSPipe pipe];
+    _outputDrained = dispatch_group_create();
+    _task = [[NSTask alloc] init];
+    _task.executableURL = [NSURL fileURLWithPath:path];
+    _task.environment = environmentLoggingAtInfo();
+    _task.standardInput = _inputPipe;
+    _task.standardOutput = _outputPipe;
+    _task.standardError = _errorPipe;
     return self;
 }
 
-// The window server derives the shadow from drawn alpha, so it must follow every shape change.
-- (void)redrawShadow {
-    [_panel display];
-    [_panel invalidateShadow];
+- (BOOL)launchWithInput:(NSString *)text error:(NSError **)error {
+    if (![_task launchAndReturnError:error]) return NO;
+    [self writeInputInBackground:[text dataUsingEncoding:NSUTF8StringEncoding]];
+    [self drainOutputInBackground];
+    return YES;
 }
 
-- (void)finishWithSuccess {
-    [self showOutcome:makeOutcomeSymbol(YES) reason:nil hold:kSuccessHold];
-}
-
-- (void)finishWithFailure:(NSString *)reason {
-    [self showOutcome:makeOutcomeSymbol(NO) reason:makeReasonLabel(reason) hold:kFailureHold];
-}
-
-- (void)showOutcome:(NSImageView *)symbol reason:(NSTextField *)reason hold:(NSTimeInterval)hold {
-    if (_closed) return;
-    if (reason) {
-        NSSize pill = layOutPill(symbol, reason);
-        [_panel setFrame:(NSRect){indicatorOriginNearCursor(pill), pill} display:NO];
-    }
-
-    NSArray<NSView *> *incoming = reason ? @[symbol, reason] : @[symbol];
-    for (NSView *view in incoming) {
-        view.alphaValue = 0;
-        [_badge addSubview:view];
-    }
-    [self redrawShadow];
-
-    NSProgressIndicator *spinner = _spinner;
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-        context.duration = kCrossfade;
-        spinner.animator.alphaValue = 0;
-        for (NSView *view in incoming) view.animator.alphaValue = 1;
-    } completionHandler:^{
-        [spinner stopAnimation:nil];
-        [spinner removeFromSuperview];
-    }];
-    if (![[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion]) {
-        [symbol addSymbolEffect:[NSSymbolBounceEffect effect]];
-    }
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(hold * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self fadeOutAndClose];
+// After launch and off the main thread: input larger than the pipe buffer blocks until proofd reads it.
+- (void)writeInputInBackground:(NSData *)input {
+    NSFileHandle *stdinHandle = _inputPipe.fileHandleForWriting;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [stdinHandle writeData:input error:nil];
+        [stdinHandle closeAndReturnError:nil];
     });
 }
 
-- (void)fadeOutAndClose {
-    if (_closed) return;
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-        context.duration = kFadeOut;
-        self->_panel.animator.alphaValue = 0;
-    } completionHandler:^{
-        [self close];
-    }];
+// Undrained, output larger than the pipe buffer (64 KB) would block proofd until the deadline.
+- (void)drainOutputInBackground {
+    dispatch_queue_t readQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    NSFileHandle *output = _outputPipe.fileHandleForReading, *errors = _errorPipe.fileHandleForReading;
+    dispatch_group_async(_outputDrained, readQueue, ^{
+        self->_outputData = [output readDataToEndOfFile];
+    });
+    dispatch_group_async(_outputDrained, readQueue, ^{
+        self->_errorData = [errors readDataToEndOfFile];
+    });
 }
 
-- (void)close {
-    _closed = YES;
-    [_followCursor invalidate];
-    [_panel close];
+- (BOOL)spinRunLoopUntilExitOr:(NSDate *)deadline {
+    while (_task.isRunning && deadline.timeIntervalSinceNow > 0) {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:kRunLoopSlice]];
+    }
+    return !_task.isRunning;
+}
+
+- (void)terminateThenKillAfterGrace {
+    [_task terminate];
+    if (![self spinRunLoopUntilExitOr:[NSDate dateWithTimeIntervalSinceNow:kTerminateGrace]]) {
+        kill(_task.processIdentifier, SIGKILL);
+    }
+    [_task waitUntilExit];
+}
+
+// A process proofd started can inherit the pipes and hold them open after proofd exits.
+- (BOOL)waitForOutputPipesToCloseBy:(NSDate *)deadline {
+    int64_t budget = (int64_t)(MAX(deadline.timeIntervalSinceNow, 0) * NSEC_PER_SEC);
+    return dispatch_group_wait(_outputDrained, dispatch_time(DISPATCH_TIME_NOW, budget)) == 0;
+}
+
+- (long)exitStatus {
+    return _task.terminationStatus;
+}
+
+- (NSString *)outputText {
+    return [[NSString alloc] initWithData:_outputData encoding:NSUTF8StringEncoding];
+}
+
+- (NSString *)errorText {
+    return [[NSString alloc] initWithData:_errorData encoding:NSUTF8StringEncoding];
 }
 
 @end
+
+static NSString *revisedByBundledProofd(NSString *text, ProofreadFailure **failure) {
+    NSString *proofdPath = [[NSBundle mainBundle] pathForAuxiliaryExecutable:@"proofd"];
+    if (!proofdPath) {
+        serviceLog(@"proofd binary missing from %@", [[NSBundle mainBundle] bundlePath]);
+        *failure = [ProofreadFailure failureWithPillReason:@"Reinstall proofd"
+                                       serviceError:@"proofd binary missing from proofd.app; reinstall it"];
+        return nil;
+    }
+
+    ProofdProcess *proofd = [[ProofdProcess alloc] initWithExecutable:proofdPath];
+    NSDate *started = [NSDate date];
+    NSDate *deadline = [started dateByAddingTimeInterval:servicesTimeoutFromInfoPlist() - kServicesTimeoutMargin];
+    NSError *launchError = nil;
+    if (![proofd launchWithInput:text error:&launchError]) {
+        serviceLog(@"proofd failed to launch: %@", launchError);
+        NSString *serviceError = [NSString stringWithFormat:@"proofd failed to launch: %@", launchError.localizedDescription];
+        *failure = [ProofreadFailure failureWithPillReason:@"Reinstall proofd" serviceError:serviceError];
+        return nil;
+    }
+
+    if (![proofd spinRunLoopUntilExitOr:deadline]) {
+        [proofd terminateThenKillAfterGrace];
+        serviceLog(@"proofd stopped after %.0fms: the calling app stops waiting at the services timeout",
+                   millisecondsSince(started));
+        *failure = [ProofreadFailure failureWithPillReason:@"Timed out" serviceError:@"proofd took longer than the services timeout"];
+        return nil;
+    }
+    serviceLog(@"proofd exited %ld after %.0fms", proofd.exitStatus, millisecondsSince(started));
+
+    if (![proofd waitForOutputPipesToCloseBy:deadline]) {
+        serviceLog(@"proofd exited but its output pipes stayed open");
+        *failure = [ProofreadFailure failureWithPillReason:kGenericFailureReason serviceError:@"proofd output never finished"];
+        return nil;
+    }
+
+    NSString *errorText = proofd.errorText;
+    if (errorText.length > 0) serviceLog(@"proofd stderr:\n%@", errorText);
+    if (proofd.exitStatus != 0) {
+        NSString *detail = errorText.length > 0 ? errorText : @"unknown error";
+        NSString *serviceError = [NSString stringWithFormat:@"proofd failed (exit %ld): %@", proofd.exitStatus, detail];
+        *failure = [ProofreadFailure failureWithPillReason:pillReasonForProofdError(errorText) serviceError:serviceError];
+        return nil;
+    }
+
+    NSString *revised = proofd.outputText;
+    if (!revised) {
+        serviceLog(@"Failed to read proofd output");
+        *failure = [ProofreadFailure failureWithPillReason:kGenericFailureReason serviceError:@"Failed to read proofd output"];
+    }
+    return revised;
+}
+
+static Selection *selectionOnPasteboard(NSPasteboard *pasteboard) {
+    NSData *rtf = [pasteboard dataForType:NSPasteboardTypeRTF];
+    NSAttributedString *richCopy = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
+    Selection *selection = [Selection selectionWithPlainCopy:[pasteboard stringForType:NSPasteboardTypeString]
+                                                    richCopy:richCopy];
+    if (selection.text.length == 0) return nil;
+    serviceLog(@"Got %@ text (%lu chars, %lu list bullets left out)", selection.styledText ? @"rich" : @"plain",
+               (unsigned long)selection.text.length, (unsigned long)selection.bulletsLeftOut);
+    if (richCopy && !selection.styledText) serviceLog(@"Rich copy differs from the selection; proofreading it as plain text");
+    return selection;
+}
+
+static NSData *rtfOfRevisionStyledLike(NSAttributedString *styledOriginal, NSString *revised) {
+    NSAttributedString *restyled = revisedTextStyledLike(styledOriginal, revised);
+    return [restyled RTFFromRange:NSMakeRange(0, restyled.length)
+               documentAttributes:@{NSDocumentTypeDocumentAttribute: NSRTFTextDocumentType}];
+}
+
+static void writeRevision(NSPasteboard *pasteboard, NSString *revised, NSAttributedString *styledOriginal) {
+    NSData *restyledRTF = styledOriginal ? rtfOfRevisionStyledLike(styledOriginal, revised) : nil;
+    if (restyledRTF) {
+        [pasteboard declareTypes:@[NSPasteboardTypeRTF, NSPasteboardTypeString] owner:nil];
+        [pasteboard setData:restyledRTF forType:NSPasteboardTypeRTF];
+    } else {
+        [pasteboard declareTypes:@[NSPasteboardTypeString] owner:nil];
+    }
+    [pasteboard setString:revised forType:NSPasteboardTypeString];
+}
 
 @interface ProofreadService : NSObject
 - (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error;
@@ -311,137 +255,28 @@ static __weak CursorBusyIndicator *visibleIndicator;
 @implementation ProofreadService
 
 - (void)proofreadService:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
-    logMsg(@"Service invoked");
+    serviceLog(@"Service invoked");
 
-    NSData *rtf = [pasteboard dataForType:NSPasteboardTypeRTF];
-    NSAttributedString *richCopy = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
-    Selection *selection = [Selection selectionWithPlainCopy:[pasteboard stringForType:NSPasteboardTypeString]
-                                                    richCopy:richCopy];
-    NSString *text = selection.text;
-    NSAttributedString *styled = selection.styled;
-    if (text.length == 0) {
-        logMsg(@"No text on pasteboard");
+    Selection *selection = selectionOnPasteboard(pasteboard);
+    if (!selection) {
+        serviceLog(@"No text on pasteboard");
         if (error) *error = @"No text to proofread";
         return;
     }
-    logMsg(@"Got %@ text (%lu chars, %lu list bullets left out)", styled ? @"rich" : @"plain",
-           (unsigned long)text.length, (unsigned long)selection.bulletsLeftOut);
-    if (richCopy && !styled) logMsg(@"Rich copy differs from the selection; proofreading it as plain text");
 
     CursorBusyIndicator *busyIndicator = [[CursorBusyIndicator alloc] init];
-
-    NSString *proofdPath = [[NSBundle mainBundle] pathForAuxiliaryExecutable:@"proofd"];
-    if (!proofdPath) {
-        [busyIndicator finishWithFailure:@"Reinstall proofd"];
-        logMsg(@"proofd binary missing from %@", [[NSBundle mainBundle] bundlePath]);
-        if (error) *error = @"proofd binary missing from proofd.app; reinstall it";
+    ProofreadFailure *failure = nil;
+    NSString *revised = revisedByBundledProofd(selection.text, &failure);
+    if (!revised) {
+        [busyIndicator finishWithFailure:failure.pillReason];
+        if (error) *error = failure.serviceError;
         return;
     }
-
-    NSPipe *inputPipe = [NSPipe pipe];
-    NSPipe *outputPipe = [NSPipe pipe];
-    NSPipe *errorPipe = [NSPipe pipe];
-
-    NSTask *task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:proofdPath];
-    NSMutableDictionary *environment = [[[NSProcessInfo processInfo] environment] mutableCopy];
-    if (!environment[@"RUST_LOG"]) environment[@"RUST_LOG"] = @"info";
-    task.environment = environment;
-    task.standardInput = inputPipe;
-    task.standardOutput = outputPipe;
-    task.standardError = errorPipe;
-
-    NSDate *started = [NSDate date];
-    NSError *launchError = nil;
-    if (![task launchAndReturnError:&launchError]) {
-        [busyIndicator finishWithFailure:@"Reinstall proofd"];
-        logMsg(@"proofd failed to launch: %@", launchError);
-        if (error) *error = [NSString stringWithFormat:@"proofd failed to launch: %@", launchError.localizedDescription];
-        return;
-    }
-
-    // Written after launch: a selection larger than the pipe buffer would block forever with no reader.
-    NSData *textData = [text dataUsingEncoding:NSUTF8StringEncoding];
-    NSFileHandle *stdinHandle = inputPipe.fileHandleForWriting;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        [stdinHandle writeData:textData error:nil];
-        [stdinHandle closeAndReturnError:nil];
-    });
-
-    // Drained while proofd runs: output larger than the pipe buffer (64 KB) would block it until the deadline.
-    __block NSData *outputData = nil;
-    __block NSData *errData = nil;
-    dispatch_group_t drained = dispatch_group_create();
-    dispatch_queue_t readQueue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-    dispatch_group_async(drained, readQueue, ^{
-        outputData = [outputPipe.fileHandleForReading readDataToEndOfFile];
-    });
-    dispatch_group_async(drained, readQueue, ^{
-        errData = [errorPipe.fileHandleForReading readDataToEndOfFile];
-    });
-
-    NSDate *deadline = [started dateByAddingTimeInterval:servicesTimeout() - kServicesTimeoutMargin];
-    if (!waitForExit(task, deadline)) {
-        // proofd stops its provider on SIGTERM, but a blocking read or DNS lookup can delay it past the caller's patience.
-        [task terminate];
-        if (!waitForExit(task, [NSDate dateWithTimeIntervalSinceNow:kTerminateGrace])) {
-            kill(task.processIdentifier, SIGKILL);
-        }
-        [task waitUntilExit];
-        [busyIndicator finishWithFailure:@"Timed out"];
-        logMsg(@"proofd stopped after %.0fms: the calling app stops waiting at the services timeout",
-               -[started timeIntervalSinceNow] * 1000);
-        if (error) *error = @"proofd took longer than the services timeout";
-        return;
-    }
-    logMsg(@"proofd exited %ld after %.0fms", (long)[task terminationStatus], -[started timeIntervalSinceNow] * 1000);
-
-    // A process proofd started could inherit the pipes and keep them open after proofd exits.
-    int64_t drainBudget = (int64_t)(MAX(deadline.timeIntervalSinceNow, 0) * NSEC_PER_SEC);
-    if (dispatch_group_wait(drained, dispatch_time(DISPATCH_TIME_NOW, drainBudget)) != 0) {
-        [busyIndicator finishWithFailure:@"Proofread failed"];
-        logMsg(@"proofd exited but its output pipes stayed open");
-        if (error) *error = @"proofd output never finished";
-        return;
-    }
-    NSString *errMsg = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding];
-    if (errMsg.length > 0) {
-        logMsg(@"proofd stderr:\n%@", errMsg);
-    }
-
-    if ([task terminationStatus] != 0) {
-        [busyIndicator finishWithFailure:shortFailureReason(errMsg)];
-        if (!errMsg || errMsg.length == 0) errMsg = @"unknown error";
-        if (error) {
-            *error = [NSString stringWithFormat:@"proofd failed (exit %ld): %@", (long)[task terminationStatus], errMsg];
-        }
-        return;
-    }
-
-    NSString *result = [[NSString alloc] initWithData:outputData encoding:NSUTF8StringEncoding];
-    if (!result) {
-        [busyIndicator finishWithFailure:@"Proofread failed"];
-        logMsg(@"Failed to read proofd output");
-        if (error) *error = @"Failed to read proofd output";
-        return;
-    }
-    logMsg(@"Got result (%lu chars)", (unsigned long)result.length);
+    serviceLog(@"Got result (%lu chars)", (unsigned long)revised.length);
     [busyIndicator finishWithSuccess];
 
-    NSData *restyledRTF = nil;
-    if (styled) {
-        NSAttributedString *restyled = revisedTextStyledLike(styled, result);
-        restyledRTF = [restyled RTFFromRange:NSMakeRange(0, restyled.length)
-                          documentAttributes:@{NSDocumentTypeDocumentAttribute: NSRTFTextDocumentType}];
-    }
-    if (restyledRTF) {
-        [pasteboard declareTypes:@[NSPasteboardTypeRTF, NSPasteboardTypeString] owner:nil];
-        [pasteboard setData:restyledRTF forType:NSPasteboardTypeRTF];
-    } else {
-        [pasteboard declareTypes:@[NSPasteboardTypeString] owner:nil];
-    }
-    [pasteboard setString:result forType:NSPasteboardTypeString];
-    logMsg(@"Wrote result back to pasteboard");
+    writeRevision(pasteboard, revised, selection.styledText);
+    serviceLog(@"Wrote result back to pasteboard");
 }
 
 @end
@@ -451,15 +286,18 @@ static __weak CursorBusyIndicator *visibleIndicator;
 
 @implementation AppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
-    logMsg(@"App launching, registering service provider");
+    serviceLog(@"App launching, registering service provider");
     NSRegisterServicesProvider([[ProofreadService alloc] init], @"proofd");
 }
 @end
 
+static void surviveWritesToAProofdThatExitedEarly(void) {
+    signal(SIGPIPE, SIG_IGN);
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        // proofd can exit before reading stdin (e.g. bad config); the write must fail, not kill the host.
-        signal(SIGPIPE, SIG_IGN);
+        surviveWritesToAProofdThatExitedEarly();
         NSApplication *app = [NSApplication sharedApplication];
         [app setDelegate:[[AppDelegate alloc] init]];
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];

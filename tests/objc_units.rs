@@ -1,13 +1,18 @@
-// The service host's Objective-C helpers are checked by small programs in macos/tests,
-// built and run here so `cargo test` and CI cover them.
-
 #![cfg(target_os = "macos")]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn compile_and_run(sources: &[&str], test: &str) {
-    let macos = Path::new(env!("CARGO_MANIFEST_DIR")).join("macos");
+mod common;
+
+use common::HOST_SOURCES;
+
+fn macos_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("macos")
+}
+
+fn compile_and_run_objc_test(sources: &[&str], test: &str) {
+    let macos = macos_dir();
     let dir = tempfile::tempdir().unwrap();
     let binary = dir.path().join(test);
 
@@ -35,20 +40,20 @@ fn compile_and_run(sources: &[&str], test: &str) {
 
 #[test]
 fn restyle_keeps_formatting_through_fixes() {
-    compile_and_run(&["Restyle.m"], "restyle_test");
+    compile_and_run_objc_test(&["Restyle.m"], "restyle_test");
 }
 
 #[test]
 fn selection_leaves_out_what_the_app_added() {
-    compile_and_run(&["Selection.m"], "selection_test");
+    compile_and_run_objc_test(&["Selection.m"], "selection_test");
 }
 
 #[test]
-fn service_host_compiles_without_warnings() {
-    let host = Path::new(env!("CARGO_MANIFEST_DIR")).join("macos/ServiceHost.m");
+fn service_host_sources_compile_without_warnings() {
+    let macos = macos_dir();
     let checked = Command::new("clang")
         .args(["-fsyntax-only", "-fobjc-arc", "-Wall", "-Werror"])
-        .arg(&host)
+        .args(HOST_SOURCES.iter().map(|source| macos.join(source)))
         .output()
         .unwrap();
     assert!(

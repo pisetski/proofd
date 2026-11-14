@@ -1,4 +1,3 @@
-// Run by tests/objc_units.rs. Prints each failed expectation and exits 1 if any failed.
 #import "../Restyle.h"
 
 static int failures = 0;
@@ -25,11 +24,11 @@ static NSDictionary *boldStyle(void) {
     return @{NSFontAttributeName: boldFont()};
 }
 
-// Joins (text, attributes) pairs into one attributed string.
-static NSAttributedString *styledText(NSArray *pieces) {
+static NSAttributedString *styledText(NSArray *textAttributePairs) {
     NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
-    for (NSUInteger i = 0; i < pieces.count; i += 2) {
-        [text appendAttributedString:[[NSAttributedString alloc] initWithString:pieces[i] attributes:pieces[i + 1]]];
+    for (NSUInteger i = 0; i < textAttributePairs.count; i += 2) {
+        [text appendAttributedString:[[NSAttributedString alloc] initWithString:textAttributePairs[i]
+                                                                            attributes:textAttributePairs[i + 1]]];
     }
     return text;
 }

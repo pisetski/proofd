@@ -1,6 +1,7 @@
 use crate::config::Config;
-use crate::prompt::build_revised_only;
-use crate::providers::{Provider, complete_with_timeout, strip_wrapping_fence};
+use crate::fence::strip_wrapping_fence;
+use crate::prompt::ProofreadPrompt;
+use crate::providers::{Provider, ProviderError};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -13,49 +14,53 @@ pub enum ProofreadError {
     #[error("provider returned empty output")]
     EmptyOutput,
     #[error("provider error: {0}")]
-    Provider(String),
+    Provider(#[from] ProviderError),
 }
 
 pub async fn proofread_text<P: Provider>(
-    input: &str,
+    selection: &str,
     config: &Config,
     provider: &P,
 ) -> Result<String, ProofreadError> {
-    if input.trim().is_empty() {
+    if selection.trim().is_empty() {
         return Err(ProofreadError::NoText);
     }
-    let input_chars = input.chars().count();
-    if input_chars > config.max_input_chars {
+    let selection_chars = selection.chars().count();
+    if selection_chars > config.max_input_chars {
         return Err(ProofreadError::TooLarge(
-            input_chars,
+            selection_chars,
             config.max_input_chars,
         ));
     }
 
-    let (system, user) = build_revised_only(input);
-    let timeout = Duration::from_secs(config.timeout_secs);
-    let revised = complete_with_timeout(provider, &system, &user, timeout)
-        .await
-        .map_err(|e| ProofreadError::Provider(e.to_string()))?;
-    let revised = strip_wrapping_fence(&revised, input);
-    if revised.is_empty() {
+    let prompt = ProofreadPrompt::for_selection(selection);
+    let reply = complete_within(config.timeout(), provider, &prompt).await?;
+    let revision = strip_wrapping_fence(&reply, selection);
+    if revision.is_empty() {
         return Err(ProofreadError::EmptyOutput);
     }
-    Ok(with_surrounding_whitespace_of(input, revised))
+    Ok(with_whitespace_edges_of(selection, revision))
 }
 
-// The result replaces the selection, so its edges must match: a triple-clicked line
-// keeps its newline and an indented line keeps its indent.
-fn with_surrounding_whitespace_of(input: &str, revised: &str) -> String {
-    let leading = &input[..input.len() - input.trim_start().len()];
-    let trailing = &input[input.trim_end().len()..];
-    format!("{leading}{}{trailing}", revised.trim())
+async fn complete_within<P: Provider>(
+    timeout: Duration,
+    provider: &P,
+    prompt: &ProofreadPrompt,
+) -> Result<String, ProviderError> {
+    tokio::time::timeout(timeout, provider.complete(&prompt.system, &prompt.user))
+        .await
+        .unwrap_or(Err(ProviderError::Timeout(timeout)))
+}
+
+fn with_whitespace_edges_of(selection: &str, revision: &str) -> String {
+    let leading = &selection[..selection.len() - selection.trim_start().len()];
+    let trailing = &selection[selection.trim_end().len()..];
+    format!("{leading}{}{trailing}", revision.trim())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::ProviderError;
 
     struct EchoProvider(String);
     impl Provider for EchoProvider {
@@ -68,6 +73,14 @@ mod tests {
     impl Provider for FailProvider {
         async fn complete(&self, _s: &str, _u: &str) -> Result<String, ProviderError> {
             Err(ProviderError::Failed("boom".into()))
+        }
+    }
+
+    struct SlowProvider;
+    impl Provider for SlowProvider {
+        async fn complete(&self, _s: &str, _u: &str) -> Result<String, ProviderError> {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok("late".to_string())
         }
     }
 
@@ -190,5 +203,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ProofreadError::EmptyOutput), "got: {err}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_provider_times_out() {
+        let config = Config {
+            timeout_secs: 1,
+            ..test_config()
+        };
+        let err = proofread_text("text", &config, &SlowProvider)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ProofreadError::Provider(ProviderError::Timeout(_))),
+            "got: {err}"
+        );
     }
 }

@@ -1,33 +1,27 @@
 use proofd_lib::proofread::proofread_text;
-use proofd_lib::providers::{FORGET_SESSIONS_FLAG, forget_sessions, from_config};
+use proofd_lib::providers::{AnyProvider, FORGET_SESSIONS_FLAG, forget_sessions};
 use proofd_lib::{config, prompt};
 use std::io::{IsTerminal, Read};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 use tokio::signal::unix::{SignalKind, signal};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const USAGE: &str = "usage: proofd   (reads text on stdin, writes revised text to stdout)";
+const QUIET_ENOUGH_FOR_EDITOR_FILTERS: &str = "warn";
 
 type Outcome = Result<(), Box<dyn std::error::Error>>;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    // stderr, not stdout: stdout carries the revised text and nothing else.
-    // Warn by default: editor filters like vim's `:!proofd` paste stderr along with stdout.
-    // The service host sets RUST_LOG=info for its log.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::stderr().is_terminal())
-        .init();
+    log_to_stderr_keeping_stdout_for_the_revision();
 
     let args: Vec<String> = std::env::args().collect();
     let outcome = match args.get(1).map(String::as_str) {
-        None if !std::io::stdin().is_terminal() => proofread_until_terminated().await,
-        Some(FORGET_SESSIONS_FLAG) => forget_opencode_sessions(&args[2..]),
+        None if !std::io::stdin().is_terminal() => proofread_stopping_cleanly_on_signal().await,
+        Some(FORGET_SESSIONS_FLAG) => forget_opencode_sessions_detached_from_proofread(&args[2..]),
         Some("-h" | "--help") => {
             print_help();
             Ok(())
@@ -50,38 +44,45 @@ async fn main() -> ExitCode {
     }
 }
 
+fn log_to_stderr_keeping_stdout_for_the_revision() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(QUIET_ENOUGH_FOR_EDITOR_FILTERS));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
+}
+
 fn print_help() {
-    let show = |path: Option<std::path::PathBuf>| match path {
-        Some(p) if p.exists() => p.display().to_string(),
-        Some(p) => format!("{} (not found, using defaults)", p.display()),
+    let describe = |path: Option<PathBuf>| match path {
+        Some(path) if path.exists() => path.display().to_string(),
+        Some(path) => format!("{} (not found, using defaults)", path.display()),
         None => "<no config directory>".to_string(),
     };
     println!("{USAGE}");
     println!();
-    println!("config: {}", show(config::config_path()));
-    println!("prompt: {}", show(prompt::prompt_path()));
+    println!("config: {}", describe(config::config_path()));
+    println!("prompt: {}", describe(prompt::prompt_path()));
     println!("Both are optional; see https://github.com/pisetski/proofd#configure");
 }
 
-// The service host sends SIGTERM at its deadline, and Ctrl-C sends SIGINT. Dropping the
-// proofread kills the provider CLI and deletes its opencode session, which dying on the
-// signal would skip.
-async fn proofread_until_terminated() -> Outcome {
+async fn proofread_stopping_cleanly_on_signal() -> Outcome {
     let mut terminate = signal(SignalKind::terminate())?;
     let mut interrupt = signal(SignalKind::interrupt())?;
     tokio::select! {
-        outcome = proofread() => outcome,
+        outcome = proofread_stdin() => outcome,
         _ = terminate.recv() => Err("stopped by SIGTERM".into()),
         _ = interrupt.recv() => Err("stopped by SIGINT".into()),
     }
 }
 
-async fn proofread() -> Outcome {
+async fn proofread_stdin() -> Outcome {
     let config_path = config::config_path();
-    let cfg = config::load_from_path(config_path.clone())?;
+    let cfg = config::load(config_path.as_deref())?;
 
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input)?;
+    let mut selection = String::new();
+    std::io::stdin().read_to_string(&mut selection)?;
 
     info!(
         "proofread start (provider={} model={} config={} input={} chars)",
@@ -89,31 +90,29 @@ async fn proofread() -> Outcome {
         cfg.model,
         config_path
             .as_ref()
-            .map(|p| p.display().to_string())
+            .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<none>".to_string()),
-        input.chars().count()
+        selection.chars().count()
     );
 
-    let provider = from_config(&cfg);
-    let started = std::time::Instant::now();
-    let revised = proofread_text(&input, &cfg, &provider).await?;
+    let provider = AnyProvider::from_config(&cfg);
+    let started = Instant::now();
+    let revision = proofread_text(&selection, &cfg, &provider).await?;
     info!(
         "proofread ok ({} chars) in {}ms",
-        revised.chars().count(),
+        revision.chars().count(),
         started.elapsed().as_millis()
     );
-    print!("{revised}");
+    print!("{revision}");
     Ok(())
 }
 
-// Internal: proofd starts itself detached with this flag so deleting opencode's saved
-// sessions never delays pasting the result.
-fn forget_opencode_sessions(args: &[String]) -> Outcome {
-    let [bin, dir, cutoff_ms] = args else {
+fn forget_opencode_sessions_detached_from_proofread(args: &[String]) -> Outcome {
+    let [opencode, sandbox, cutoff_ms] = args else {
         return Err(
             format!("usage: proofd {FORGET_SESSIONS_FLAG} <opencode> <dir> <cutoff-ms>").into(),
         );
     };
-    forget_sessions(bin, std::path::Path::new(dir), cutoff_ms.parse()?)?;
+    forget_sessions(opencode, Path::new(sandbox), cutoff_ms.parse()?)?;
     Ok(())
 }

@@ -1,5 +1,7 @@
+use crate::paths;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -14,6 +16,14 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Opencode => "opencode",
+            Self::OpenAICompat => "openai-compat",
+        }
+    }
+
     fn default_model(self) -> Option<&'static str> {
         match self {
             Self::Claude => Some("haiku"),
@@ -25,13 +35,14 @@ impl ProviderKind {
 
 impl std::fmt::Display for ProviderKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Claude => write!(f, "claude"),
-            Self::Opencode => write!(f, "opencode"),
-            Self::OpenAICompat => write!(f, "openai-compat"),
-        }
+        f.write_str(self.name())
     }
 }
+
+const CONFIG_FILE: &str = "config.toml";
+const DEFAULT_TIMEOUT_SECS: u64 = 15;
+const MAX_TIMEOUT_SECS: u64 = 600;
+const DEFAULT_MAX_INPUT_CHARS: usize = 12_000;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -51,41 +62,78 @@ pub struct Config {
 }
 
 fn default_timeout_secs() -> u64 {
-    15
+    DEFAULT_TIMEOUT_SECS
 }
 
 fn default_max_input_chars() -> usize {
-    12_000
-}
-
-impl Config {
-    fn for_provider(provider: ProviderKind) -> Self {
-        Self {
-            provider,
-            model: provider.default_model().unwrap_or_default().to_string(),
-            base_url: None,
-            provider_bin: None,
-            timeout_secs: default_timeout_secs(),
-            max_input_chars: default_max_input_chars(),
-        }
-    }
-
-    fn without_file(is_installed: impl Fn(&str) -> bool) -> Self {
-        if !is_installed("claude") && is_installed("opencode") {
-            return Self::for_provider(ProviderKind::Opencode);
-        }
-        Self::default()
-    }
-}
-
-fn cli_installed(name: &str) -> bool {
-    crate::providers::resolve_cli(None, name).is_ok()
+    DEFAULT_MAX_INPUT_CHARS
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self::for_provider(ProviderKind::default())
     }
+}
+
+impl Config {
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout_secs)
+    }
+
+    fn for_provider(provider: ProviderKind) -> Self {
+        Self {
+            provider,
+            model: provider.default_model().unwrap_or_default().to_string(),
+            base_url: None,
+            provider_bin: None,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            max_input_chars: DEFAULT_MAX_INPUT_CHARS,
+        }
+    }
+
+    fn for_installed_clis(is_installed: impl Fn(&str) -> bool) -> Self {
+        if !is_installed("claude") && is_installed("opencode") {
+            return Self::for_provider(ProviderKind::Opencode);
+        }
+        Self::default()
+    }
+
+    fn validated(mut self) -> Result<Self, String> {
+        if self.model.trim().is_empty() {
+            let Some(default_model) = self.provider.default_model() else {
+                return Err(format!(
+                    "`model` is required when provider = \"{}\"",
+                    self.provider
+                ));
+            };
+            self.model = default_model.to_string();
+        }
+        if !(1..=MAX_TIMEOUT_SECS).contains(&self.timeout_secs) {
+            return Err(format!("`timeout_secs` must be in 1..={MAX_TIMEOUT_SECS}"));
+        }
+        if self.max_input_chars == 0 {
+            return Err("`max_input_chars` must be > 0".to_string());
+        }
+        self.provider_bin = match self.provider_bin.map(|bin| bin.trim().to_string()) {
+            Some(blank) if blank.is_empty() => {
+                return Err("`provider_bin` must not be empty".to_string());
+            }
+            bin => bin,
+        };
+        self.base_url = self
+            .base_url
+            .map(|url| url.trim().trim_end_matches('/').to_string());
+        if self.provider == ProviderKind::OpenAICompat
+            && self.base_url.as_deref().is_none_or(str::is_empty)
+        {
+            return Err("`base_url` is required when provider = \"openai-compat\"".to_string());
+        }
+        Ok(self)
+    }
+}
+
+fn cli_installed(name: &str) -> bool {
+    crate::providers::resolve_cli(None, name).is_ok()
 }
 
 #[derive(Debug, Error)]
@@ -100,108 +148,28 @@ pub enum ConfigError {
     },
 }
 
-pub fn candidate_paths(filename: &str) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-    let mut push_unique = |p: PathBuf| {
-        if !out.contains(&p) {
-            out.push(p);
-        }
-    };
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        let xdg = PathBuf::from(xdg);
-        if !xdg.as_os_str().is_empty() {
-            push_unique(xdg.join("proofd").join(filename));
-        }
-    }
-    if let Some(home) = dirs::home_dir() {
-        push_unique(home.join(".config").join("proofd").join(filename));
-    }
-    if let Some(d) = dirs::config_dir() {
-        push_unique(d.join("proofd").join(filename));
-    }
-    out
-}
-
 pub fn config_path() -> Option<PathBuf> {
-    preferred_path("config.toml")
+    paths::existing_or_preferred_path(CONFIG_FILE)
 }
 
-pub fn preferred_path(filename: &str) -> Option<PathBuf> {
-    let candidates = candidate_paths(filename);
-    candidates
-        .iter()
-        .find(|p| p.exists())
-        .or_else(|| candidates.first())
-        .cloned()
-}
-
-pub fn load_from_path(path: Option<PathBuf>) -> Result<Config, ConfigError> {
-    let path = path.or_else(config_path);
-    let Some(path) = path.filter(|p| p.exists()) else {
-        return Ok(Config::without_file(cli_installed));
+pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
+    let Some(path) = path.filter(|path| path.exists()) else {
+        return Ok(Config::for_installed_clis(cli_installed));
     };
-    let contents = std::fs::read_to_string(&path).map_err(|e| ConfigError::Io {
+    let contents = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
         path: path.display().to_string(),
-        source: e,
+        source,
     })?;
     parse_toml(&contents, &path.display().to_string())
 }
 
 pub fn parse_toml(contents: &str, path_for_errors: &str) -> Result<Config, ConfigError> {
-    let mut cfg: Config = toml::from_str(contents).map_err(|e| ConfigError::Invalid {
+    let invalid = |msg: String| ConfigError::Invalid {
         path: path_for_errors.to_string(),
-        msg: e.to_string(),
-    })?;
-    validate(&mut cfg, path_for_errors)?;
-    Ok(cfg)
-}
-
-fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> {
-    let invalid = |msg: &str| ConfigError::Invalid {
-        path: path_for_errors.to_string(),
-        msg: msg.to_string(),
+        msg,
     };
-    if cfg.model.trim().is_empty() {
-        let Some(model) = cfg.provider.default_model() else {
-            return Err(invalid(&format!(
-                "`model` is required when provider = \"{}\"",
-                cfg.provider
-            )));
-        };
-        cfg.model = model.to_string();
-    }
-    if cfg.timeout_secs == 0 || cfg.timeout_secs > 600 {
-        return Err(invalid("`timeout_secs` must be in 1..=600"));
-    }
-    if cfg.max_input_chars == 0 {
-        return Err(invalid("`max_input_chars` must be > 0"));
-    }
-    if let Some(bin) = cfg.provider_bin.as_ref()
-        && bin.trim().is_empty()
-    {
-        return Err(invalid("`provider_bin` must not be empty"));
-    }
-    if cfg.provider == ProviderKind::OpenAICompat {
-        match &cfg.base_url {
-            Some(u) if !u.trim().is_empty() => {}
-            _ => {
-                return Err(invalid(
-                    "`base_url` is required when provider = \"openai-compat\"",
-                ));
-            }
-        }
-    }
-    if let Some(u) = cfg.base_url.take() {
-        let trimmed = u.trim().trim_end_matches('/').to_string();
-        cfg.base_url = Some(trimmed);
-    }
-    if let Some(b) = cfg.provider_bin.take() {
-        let trimmed = b.trim().to_string();
-        if !trimmed.is_empty() {
-            cfg.provider_bin = Some(trimmed);
-        }
-    }
-    Ok(())
+    let parsed: Config = toml::from_str(contents).map_err(|e| invalid(e.to_string()))?;
+    parsed.validated().map_err(invalid)
 }
 
 #[cfg(test)]
@@ -213,22 +181,22 @@ mod tests {
     fn missing_file_returns_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("config.toml");
-        let cfg = load_from_path(Some(missing)).unwrap();
-        assert_eq!(cfg, Config::without_file(cli_installed));
+        let cfg = load(Some(&missing)).unwrap();
+        assert_eq!(cfg, Config::for_installed_clis(cli_installed));
         assert_eq!(cfg.timeout_secs, 15);
     }
 
     #[test]
-    fn without_file_prefers_claude() {
-        let cfg = Config::without_file(|_| true);
+    fn for_installed_clis_prefers_claude() {
+        let cfg = Config::for_installed_clis(|_| true);
         assert_eq!(cfg.provider, ProviderKind::Claude);
         assert_eq!(cfg.model, "haiku");
-        assert_eq!(Config::without_file(|_| false), Config::default());
+        assert_eq!(Config::for_installed_clis(|_| false), Config::default());
     }
 
     #[test]
-    fn without_file_falls_back_to_opencode_when_only_it_is_installed() {
-        let cfg = Config::without_file(|name| name == "opencode");
+    fn for_installed_clis_falls_back_to_opencode_when_only_it_is_installed() {
+        let cfg = Config::for_installed_clis(|name| name == "opencode");
         assert_eq!(cfg.provider, ProviderKind::Opencode);
         assert_eq!(cfg.model, "opencode/deepseek-v4.1-flash-free");
     }
@@ -301,9 +269,7 @@ max_input_chars = 2000
     fn load_invalid_file_errors() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "timeout_secs = 0").unwrap();
-        let err = load_from_path(Some(f.path().to_path_buf()))
-            .unwrap_err()
-            .to_string();
+        let err = load(Some(f.path())).unwrap_err().to_string();
         assert!(err.contains("invalid config"), "got: {err}");
     }
 

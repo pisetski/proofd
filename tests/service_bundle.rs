@@ -1,8 +1,9 @@
-// Info.plist, ServiceHost.m and build.sh must agree, or AppKit silently drops the
-// service request and the pasteboard comes back unchanged.
-
 use plist::{Dictionary, Value};
 use std::path::Path;
+
+mod common;
+
+use common::HOST_SOURCES;
 
 fn read(rel: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
@@ -51,8 +52,7 @@ fn proofread_service() -> Dictionary {
         .expect("a service with menu item \"Proofread Selection\"")
 }
 
-// Text between the first `@"` after `anchor` and the closing quote.
-fn objc_string_after<'a>(source: &'a str, anchor: &str) -> &'a str {
+fn first_objc_string_literal_after<'a>(source: &'a str, anchor: &str) -> &'a str {
     let start = source
         .find(anchor)
         .unwrap_or_else(|| panic!("{anchor} not found in ServiceHost.m"));
@@ -93,7 +93,7 @@ fn port_name_matches_registered_provider() {
     let service = proofread_service();
     let port = string(&service, "NSPortName");
     let source = read("macos/ServiceHost.m");
-    let registered = objc_string_after(&source, "NSRegisterServicesProvider(");
+    let registered = first_objc_string_literal_after(&source, "NSRegisterServicesProvider(");
     assert_eq!(
         port, registered,
         "NSPortName vs NSRegisterServicesProvider name"
@@ -117,7 +117,7 @@ fn service_sends_and_returns_plain_and_rich_text() {
 #[test]
 fn build_compiles_every_host_source() {
     let build = read("macos/build.sh");
-    for source in ["ServiceHost.m", "Restyle.m", "Selection.m"] {
+    for source in HOST_SOURCES {
         assert!(
             build.contains(&format!("\"$SCRIPT_DIR/{source}\"")),
             "build.sh must compile {source}"
@@ -141,7 +141,7 @@ fn bundle_executable_matches_build_output() {
 fn service_host_runs_the_bundled_cli() {
     let build = read("macos/build.sh");
     let source = read("macos/ServiceHost.m");
-    let looked_up = objc_string_after(&source, "pathForAuxiliaryExecutable:");
+    let looked_up = first_objc_string_literal_after(&source, "pathForAuxiliaryExecutable:");
     assert!(
         build.contains(&format!("\"$BIN_DIR/{looked_up}\"")),
         "build.sh must copy the CLI to Contents/MacOS/{looked_up}, where ServiceHost.m looks for it"

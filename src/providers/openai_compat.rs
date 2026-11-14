@@ -1,6 +1,7 @@
-use super::sanitize::sanitize_output;
 use super::{Provider, ProviderError};
 use std::time::Instant;
+
+const LOW_TEMPERATURE_FOR_MINIMAL_EDITS: f64 = 0.2;
 
 #[derive(Debug, Clone)]
 pub struct OpenAICompat {
@@ -19,7 +20,7 @@ impl Provider for OpenAICompat {
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": 0.2,
+            "temperature": LOW_TEMPERATURE_FOR_MINIMAL_EDITS,
         });
         let send = Instant::now();
         let resp = self
@@ -52,7 +53,7 @@ impl Provider for OpenAICompat {
         let content = value
             .pointer("/choices/0/message/content")
             .and_then(|c| c.as_str())
-            .unwrap_or("");
-        sanitize_output(content)
+            .unwrap_or_default();
+        Ok(content.to_string())
     }
 }

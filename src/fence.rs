@@ -1,33 +1,22 @@
-use super::ProviderError;
-
-pub fn sanitize_output(raw: &str) -> Result<String, ProviderError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(ProviderError::EmptyOutput);
+pub fn strip_wrapping_fence<'a>(reply: &'a str, selection: &str) -> &'a str {
+    let reply = reply.trim();
+    if starts_with_fence(selection) {
+        return reply;
     }
-    Ok(trimmed.to_string())
-}
-
-// Models sometimes wrap their whole answer in a fence. A fenced input keeps its fence,
-// and an inner line that would close the opening fence means the output is several blocks.
-pub fn strip_wrapping_fence<'a>(output: &'a str, input: &str) -> &'a str {
-    let trimmed = output.trim();
-    if starts_with_fence(input) {
-        return trimmed;
-    }
-    let lines: Vec<&str> = trimmed.lines().collect();
+    let lines: Vec<&str> = reply.lines().collect();
     let [first, inner @ .., last] = lines.as_slice() else {
-        return trimmed;
+        return reply;
     };
     let Some(opening) = fence_marker(first) else {
-        return trimmed;
+        return reply;
     };
     let closes_opening = |line: &str| fence_marker(line).is_some_and(|m| m.starts_with(opening));
     let last_is_bare_fence = fence_marker(last).is_some_and(|m| m == last.trim());
-    if !closes_opening(last) || !last_is_bare_fence || inner.iter().any(|l| closes_opening(l)) {
-        return trimmed;
+    let is_several_blocks = inner.iter().any(|line| closes_opening(line));
+    if !closes_opening(last) || !last_is_bare_fence || is_several_blocks {
+        return reply;
     }
-    trimmed[first.len() + 1..trimmed.len() - last.len()].trim()
+    reply[first.len() + 1..reply.len() - last.len()].trim()
 }
 
 fn starts_with_fence(text: &str) -> bool {
@@ -50,20 +39,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sanitize_trims_normal_output() {
-        assert_eq!(sanitize_output("  hello world  \n").unwrap(), "hello world");
+    fn trims_unfenced_output() {
         assert_eq!(
-            sanitize_output("\n\n  multi\n  line  \n\n").unwrap(),
+            strip_wrapping_fence("\n\n  multi\n  line  \n\n", "x"),
             "multi\n  line"
         );
-    }
-
-    #[test]
-    fn sanitize_rejects_empty() {
-        assert!(matches!(
-            sanitize_output("   \n\t  "),
-            Err(ProviderError::EmptyOutput)
-        ));
     }
 
     #[test]

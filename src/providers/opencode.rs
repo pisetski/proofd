@@ -1,15 +1,13 @@
-use super::cli_provider::{CliRun, cli_sandbox_dir, run_cli};
+use super::cli_process::{CliInvocation, cwd_without_project_context, run_cli};
 use super::cli_resolver::resolve_cli;
-use super::sanitize::sanitize_output;
+use super::opencode_sessions::ForgetSessionsOnDrop;
 use super::{Provider, ProviderError};
-use serde::Deserialize;
-use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
-pub const FORGET_SESSIONS_FLAG: &str = "--forget-opencode-sessions";
-const AGENT: &str = "proofd";
+const NAME: &str = "opencode";
+const LOCKED_DOWN_AGENT: &str = "proofd";
+// opencode retries a rejected request (e.g. a spent quota) silently; only its error log shows it.
+const PRINT_ERROR_LOGS_TO_STDERR: [&str; 3] = ["--print-logs", "--log-level", "ERROR"];
 
 #[derive(Debug, Clone)]
 pub struct OpencodeCli {
@@ -19,56 +17,51 @@ pub struct OpencodeCli {
 
 impl Provider for OpencodeCli {
     async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
-        let bin = resolve_cli(self.bin.as_deref(), "opencode")?;
-        let sandbox = cli_sandbox_dir();
-        let _forget = sandbox.as_ref().map(|dir| ForgetSessionsOnDrop {
-            bin: bin.clone(),
-            dir: dir.clone(),
-        });
-        let config = opencode_config(system);
-        let env = opencode_env(&config);
-        let stdout = run_cli(CliRun {
-            name: "opencode",
-            explicit_bin: Some(&bin),
-            args: &opencode_args(&self.model, sandbox.as_deref()),
-            env: &env,
+        let program = resolve_cli(self.bin.as_deref(), NAME)?;
+        let sandbox = cwd_without_project_context();
+        let _forget_sessions = sandbox
+            .as_deref()
+            .map(|dir| ForgetSessionsOnDrop::new(&program, dir));
+        let config = tool_less_agent_config(system);
+        let stdout = run_cli(CliInvocation {
+            name: NAME,
+            program: &program,
+            args: &run_args(&self.model, sandbox.as_deref()),
+            env: &isolated_env(&config),
             stdin_text: user,
             cwd: sandbox.as_deref(),
-            fatal_stderr_line: stream_error,
+            fatal_stderr_line: rejected_request_reason,
         })
         .await?;
-        sanitize_output(&reply_text(&stdout))
+        Ok(reply_text_from_events(&stdout))
     }
 }
 
-// Error-level logs are the only sign of a rejected request (e.g. a spent free quota):
-// opencode keeps retrying it silently until proofd times out.
-pub fn opencode_args(model: &str, sandbox: Option<&Path>) -> Vec<String> {
-    let mut args = [
+fn run_args(model: &str, sandbox: Option<&Path>) -> Vec<String> {
+    let mut args: Vec<String> = [
         "run",
         "--agent",
-        AGENT,
+        LOCKED_DOWN_AGENT,
         "--model",
         model,
         "--format",
         "json",
-        "--print-logs",
-        "--log-level",
-        "ERROR",
     ]
+    .into_iter()
+    .chain(PRINT_ERROR_LOGS_TO_STDERR)
     .map(String::from)
-    .to_vec();
+    .collect();
     if let Some(dir) = sandbox {
         args.extend(["--dir".to_string(), dir.display().to_string()]);
     }
     args
 }
 
-// Selected text is untrusted: a selection saying "run this command" must have no tool to run it with.
-pub fn opencode_config(system: &str) -> String {
+// The selection is untrusted: text saying "run this command" must have no tool to run it with.
+fn tool_less_agent_config(system: &str) -> String {
     serde_json::json!({
         "agent": {
-            AGENT: {
+            LOCKED_DOWN_AGENT: {
                 "mode": "primary",
                 "prompt": system,
                 "permission": { "*": "deny" },
@@ -81,7 +74,7 @@ pub fn opencode_config(system: &str) -> String {
     .to_string()
 }
 
-fn opencode_env(config: &str) -> [(&str, &str); 6] {
+fn isolated_env(config: &str) -> [(&str, &str); 6] {
     [
         ("OPENCODE_CONFIG_CONTENT", config),
         ("OPENCODE_DISABLE_PROJECT_CONFIG", "1"),
@@ -92,18 +85,18 @@ fn opencode_env(config: &str) -> [(&str, &str); 6] {
     ]
 }
 
-pub fn stream_error(log_line: &str) -> Option<String> {
-    if !log_line.contains(r#"message="stream error""#) {
+fn rejected_request_reason(error_log_line: &str) -> Option<String> {
+    if !error_log_line.contains(r#"message="stream error""#) {
         return None;
     }
-    let reason = match log_line.split_once(r#"error.error=""#) {
+    let reason = match error_log_line.split_once(r#"error.error=""#) {
         Some((_, quoted)) => quoted.trim_end().trim_end_matches('"'),
-        None => log_line.trim(),
+        None => error_log_line.trim(),
     };
     Some(reason.to_string())
 }
 
-pub fn reply_text(json_events: &str) -> String {
+fn reply_text_from_events(json_events: &str) -> String {
     json_events
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -112,106 +105,30 @@ pub fn reply_text(json_events: &str) -> String {
         .collect()
 }
 
-// Runs on timeout too, when the future is dropped mid-flight.
-struct ForgetSessionsOnDrop {
-    bin: String,
-    dir: PathBuf,
-}
-
-impl Drop for ForgetSessionsOnDrop {
-    fn drop(&mut self) {
-        let Ok(proofd) = std::env::current_exe() else {
-            tracing::warn!("cannot locate proofd to delete opencode sessions");
-            return;
-        };
-        let spawned = Command::new(proofd)
-            .arg(FORGET_SESSIONS_FLAG)
-            .arg(&self.bin)
-            .arg(&self.dir)
-            .arg(now_ms().to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn();
-        if let Err(e) = spawned {
-            tracing::warn!("cannot delete opencode sessions: {e}");
-        }
-    }
-}
-
-fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or_default()
-}
-
-#[derive(Debug, Deserialize)]
-struct Session {
-    id: String,
-    directory: PathBuf,
-    created: u128,
-}
-
-// A session created after the cutoff belongs to a proofread still in flight.
-pub fn sessions_to_forget(list_json: &str, dir: &Path, cutoff_ms: u128) -> Vec<String> {
-    serde_json::from_str::<Vec<Session>>(list_json)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|s| same_dir(&s.directory, dir) && s.created <= cutoff_ms)
-        .map(|s| s.id)
-        .collect()
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
-}
-
-pub fn forget_sessions(bin: &str, dir: &Path, cutoff_ms: u128) -> Result<(), String> {
-    let list = Command::new(bin)
-        .args(["session", "list", "--format", "json"])
-        .current_dir(dir)
-        .output()
-        .map_err(|e| format!("list opencode sessions: {e}"))?;
-    if !list.status.success() {
-        return Err(format!(
-            "list opencode sessions: {}",
-            String::from_utf8_lossy(&list.stderr).trim()
-        ));
-    }
-    for id in sessions_to_forget(&String::from_utf8_lossy(&list.stdout), dir, cutoff_ms) {
-        Command::new(bin)
-            .args(["session", "delete", &id])
-            .current_dir(dir)
-            .output()
-            .map_err(|e| format!("delete opencode session {id}: {e}"))?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn args_select_the_locked_down_agent_and_json_output() {
-        let args = opencode_args("opencode/m", Some(Path::new("/sandbox")));
+        let args = run_args("opencode/m", Some(Path::new("/sandbox")));
         let has_pair = |flag: &str, value: &str| {
             args.windows(2)
                 .any(|pair| pair[0] == flag && pair[1] == value)
         };
         assert_eq!(args[0], "run");
-        assert!(has_pair("--agent", AGENT));
+        assert!(has_pair("--agent", LOCKED_DOWN_AGENT));
         assert!(has_pair("--model", "opencode/m"));
         assert!(has_pair("--format", "json"));
+        assert!(has_pair("--log-level", "ERROR"));
         assert!(has_pair("--dir", "/sandbox"));
     }
 
     #[test]
     fn config_denies_every_tool_and_skips_title_generation() {
-        let config: serde_json::Value = serde_json::from_str(&opencode_config("SYSTEM")).unwrap();
-        let agent = &config["agent"][AGENT];
+        let config: serde_json::Value =
+            serde_json::from_str(&tool_less_agent_config("SYSTEM")).unwrap();
+        let agent = &config["agent"][LOCKED_DOWN_AGENT];
         assert_eq!(agent["prompt"], "SYSTEM");
         assert_eq!(agent["permission"]["*"], "deny");
         assert_eq!(config["agent"]["title"]["disable"], true);
@@ -219,18 +136,21 @@ mod tests {
     }
 
     #[test]
-    fn stream_error_takes_the_reason_from_opencodes_error_log() {
+    fn rejected_request_reason_comes_from_opencodes_stream_error_log() {
         let line = r#"timestamp=2026-11-14T15:17:58.057Z level=ERROR run=bf2446a5 message="stream error" providerID=opencode agent=proofd error.error="AI_APICallError: Free usage limit reached. Subscribe: https://opencode.ai/go"
 "#;
         assert_eq!(
-            stream_error(line).as_deref(),
+            rejected_request_reason(line).as_deref(),
             Some("AI_APICallError: Free usage limit reached. Subscribe: https://opencode.ai/go")
         );
         assert_eq!(
-            stream_error(r#"level=ERROR message="stream error" code=429"#).as_deref(),
+            rejected_request_reason(r#"level=ERROR message="stream error" code=429"#).as_deref(),
             Some(r#"level=ERROR message="stream error" code=429"#)
         );
-        assert_eq!(stream_error(r#"level=ERROR message="plugin failed""#), None);
+        assert_eq!(
+            rejected_request_reason(r#"level=ERROR message="plugin failed""#),
+            None
+        );
     }
 
     #[test]
@@ -243,24 +163,6 @@ mod tests {
             r#"{"type":"step_finish","sessionID":"ses_1","part":{"type":"step-finish"}}"#,
         ]
         .join("\n");
-        assert_eq!(reply_text(&events), "Hello, world.");
-    }
-
-    #[test]
-    fn forgets_only_finished_sessions_in_the_sandbox() {
-        let list = r#"[
-            {"id":"ses_old","directory":"/sandbox","created":100,"updated":100,"title":"t"},
-            {"id":"ses_in_flight","directory":"/sandbox","created":300,"updated":300,"title":"t"},
-            {"id":"ses_user","directory":"/Users/me/project","created":100,"updated":100,"title":"t"}
-        ]"#;
-        assert_eq!(
-            sessions_to_forget(list, Path::new("/sandbox"), 200),
-            vec!["ses_old".to_string()]
-        );
-    }
-
-    #[test]
-    fn unparseable_session_list_forgets_nothing() {
-        assert!(sessions_to_forget("oops", Path::new("/sandbox"), 200).is_empty());
+        assert_eq!(reply_text_from_events(&events), "Hello, world.");
     }
 }

@@ -11,9 +11,8 @@ typedef struct {
     NSInteger count;
 } Tokens;
 
-// Past this many token insertions and deletions the model rewrote the text rather than
-// proofread it, and aligning it would take memory quadratic in the edits.
-static const NSInteger kMaxEdits = 1000;
+static const NSInteger kMaxEditsOfAProofread = 1000;
+static const NSInteger kInsertedToken = -1;
 
 static NSData *charactersOf(NSString *text) {
     NSMutableData *chars = [NSMutableData dataWithLength:text.length * sizeof(unichar)];
@@ -21,8 +20,7 @@ static NSData *charactersOf(NSString *text) {
     return chars;
 }
 
-// Words, and single characters otherwise: an emoji is one token, not two UTF-16 halves.
-static NSData *wordsAndSymbols(NSString *text, NSData *chars) {
+static NSData *wordsAndComposedCharacters(NSString *text, NSData *chars) {
     const unichar *units = chars.bytes;
     NSUInteger length = chars.length / sizeof(unichar);
     NSCharacterSet *wordCharacters = [NSCharacterSet alphanumericCharacterSet];
@@ -54,10 +52,9 @@ static NSInteger furthestX(const NSInteger *history, NSInteger d, NSInteger k) {
     return history[d * d + d + k];
 }
 
-// Myers' diff. Sets keptFrom[j] to the token of `before` that token j of `after` keeps, or -1.
-static BOOL alignTokens(Tokens before, Tokens after, NSInteger *keptFrom) {
+static BOOL alignByMyersDiff(Tokens before, Tokens after, NSInteger *keptFrom) {
     NSInteger n = before.count, m = after.count;
-    NSInteger maxEdits = MIN(n + m, kMaxEdits);
+    NSInteger maxEdits = MIN(n + m, kMaxEditsOfAProofread);
     NSInteger offset = maxEdits + 1;
     NSMutableData *frontierData = [NSMutableData dataWithLength:(2 * offset + 1) * sizeof(NSInteger)];
     NSInteger *frontier = frontierData.mutableBytes;
@@ -80,7 +77,7 @@ static BOOL alignTokens(Tokens before, Tokens after, NSInteger *keptFrom) {
     if (edits < 0) return NO;
 
     const NSInteger *history = historyData.bytes;
-    for (NSInteger j = 0; j < m; j++) keptFrom[j] = -1;
+    for (NSInteger j = 0; j < m; j++) keptFrom[j] = kInsertedToken;
     NSInteger x = n, y = m;
     for (NSInteger d = edits; d > 0; d--) {
         NSInteger k = x - y;
@@ -104,13 +101,15 @@ static BOOL alignTokens(Tokens before, Tokens after, NSInteger *keptFrom) {
     return YES;
 }
 
-// Spreads `revised` over `original` evenly; text inserted where nothing was takes the
-// style of the character before it, as typing would.
-static void mapEvenly(NSUInteger *sourceOf, NSRange revised, NSRange original) {
+static NSUInteger characterBeforeInsertionAt(NSUInteger location) {
+    return location > 0 ? location - 1 : 0;
+}
+
+static void spreadEvenlyOver(NSUInteger *sourceOf, NSRange revised, NSRange original) {
     for (NSUInteger i = 0; i < revised.length; i++) {
         sourceOf[revised.location + i] = original.length > 0
             ? original.location + i * original.length / revised.length
-            : (original.location > 0 ? original.location - 1 : 0);
+            : characterBeforeInsertionAt(original.location);
     }
 }
 
@@ -118,11 +117,11 @@ static void mapThroughAlignment(NSUInteger *sourceOf, Tokens before, Tokens afte
                                 NSUInteger originalLength, NSUInteger revisedLength) {
     NSUInteger originalEnd = 0, revisedEnd = 0;
     for (NSInteger j = 0; j <= after.count; j++) {
-        if (j < after.count && keptFrom[j] < 0) continue;
+        if (j < after.count && keptFrom[j] == kInsertedToken) continue;
         Token revisedToken = j < after.count ? after.tokens[j] : (Token){revisedLength, 0};
         Token originalToken = j < after.count ? before.tokens[keptFrom[j]] : (Token){originalLength, 0};
-        mapEvenly(sourceOf, NSMakeRange(revisedEnd, revisedToken.start - revisedEnd),
-                  NSMakeRange(originalEnd, originalToken.start - originalEnd));
+        spreadEvenlyOver(sourceOf, NSMakeRange(revisedEnd, revisedToken.start - revisedEnd),
+                         NSMakeRange(originalEnd, originalToken.start - originalEnd));
         for (NSUInteger i = 0; i < revisedToken.length; i++) {
             sourceOf[revisedToken.start + i] = originalToken.start + i;
         }
@@ -131,24 +130,9 @@ static void mapThroughAlignment(NSUInteger *sourceOf, Tokens before, Tokens afte
     }
 }
 
-NSAttributedString *revisedTextStyledLike(NSAttributedString *original, NSString *revised) {
-    NSUInteger originalLength = original.length, revisedLength = revised.length;
-    if (originalLength == 0 || revisedLength == 0) return [[NSAttributedString alloc] initWithString:revised];
-
-    NSData *originalChars = charactersOf(original.string), *revisedChars = charactersOf(revised);
-    NSData *originalTokens = wordsAndSymbols(original.string, originalChars);
-    NSData *revisedTokens = wordsAndSymbols(revised, revisedChars);
-    Tokens before = tokensOf(originalChars, originalTokens), after = tokensOf(revisedChars, revisedTokens);
-
-    NSMutableData *sourceData = [NSMutableData dataWithLength:revisedLength * sizeof(NSUInteger)];
-    NSUInteger *sourceOf = sourceData.mutableBytes;
-    NSMutableData *keptFrom = [NSMutableData dataWithLength:after.count * sizeof(NSInteger)];
-    if (alignTokens(before, after, keptFrom.mutableBytes)) {
-        mapThroughAlignment(sourceOf, before, after, keptFrom.bytes, originalLength, revisedLength);
-    } else {
-        mapEvenly(sourceOf, NSMakeRange(0, revisedLength), NSMakeRange(0, originalLength));
-    }
-
+static NSAttributedString *withOriginalRuns(NSAttributedString *original, NSString *revised,
+                                            const NSUInteger *sourceOf) {
+    NSUInteger revisedLength = revised.length;
     NSMutableAttributedString *styled = [[NSMutableAttributedString alloc] initWithString:revised];
     for (NSUInteger start = 0, end; start < revisedLength; start = end) {
         NSRange run;
@@ -159,4 +143,24 @@ NSAttributedString *revisedTextStyledLike(NSAttributedString *original, NSString
         [styled setAttributes:attributes range:NSMakeRange(start, end - start)];
     }
     return styled;
+}
+
+NSAttributedString *revisedTextStyledLike(NSAttributedString *original, NSString *revised) {
+    NSUInteger originalLength = original.length, revisedLength = revised.length;
+    if (originalLength == 0 || revisedLength == 0) return [[NSAttributedString alloc] initWithString:revised];
+
+    NSData *originalChars = charactersOf(original.string), *revisedChars = charactersOf(revised);
+    NSData *originalTokens = wordsAndComposedCharacters(original.string, originalChars);
+    NSData *revisedTokens = wordsAndComposedCharacters(revised, revisedChars);
+    Tokens before = tokensOf(originalChars, originalTokens), after = tokensOf(revisedChars, revisedTokens);
+
+    NSMutableData *sourceData = [NSMutableData dataWithLength:revisedLength * sizeof(NSUInteger)];
+    NSUInteger *sourceOf = sourceData.mutableBytes;
+    NSMutableData *keptFrom = [NSMutableData dataWithLength:after.count * sizeof(NSInteger)];
+    if (alignByMyersDiff(before, after, keptFrom.mutableBytes)) {
+        mapThroughAlignment(sourceOf, before, after, keptFrom.bytes, originalLength, revisedLength);
+    } else {
+        spreadEvenlyOver(sourceOf, NSMakeRange(0, revisedLength), NSMakeRange(0, originalLength));
+    }
+    return withOriginalRuns(original, revised, sourceOf);
 }

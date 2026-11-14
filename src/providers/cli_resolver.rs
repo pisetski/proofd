@@ -1,20 +1,19 @@
 use super::ProviderError;
 use std::path::Path;
 
-// The Services host runs with a minimal PATH, so bare names miss Homebrew and ~/.local/bin installs.
-pub fn resolve_cli(explicit: Option<&str>, name: &str) -> Result<String, ProviderError> {
-    if let Some(configured) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+pub fn resolve_cli(configured_bin: Option<&str>, name: &str) -> Result<String, ProviderError> {
+    if let Some(configured) = configured_bin.map(str::trim).filter(|s| !s.is_empty()) {
         return resolve_configured(&expand_tilde(configured));
     }
     if let Some(found) = find_on_path(name) {
         return Ok(found);
     }
-    find_in_fallback_dirs(name).ok_or_else(|| {
+    find_in_common_install_dirs(name).ok_or_else(|| {
         ProviderError::Transport(format!(
             "spawn {name}: not found on PATH ({}) nor in {} — \
              set `provider_bin` in config (e.g. `provider_bin = \"/opt/homebrew/bin/{name}\"`)",
             path_for_error(),
-            fallback_dirs().join(", "),
+            common_install_dirs().join(", "),
         ))
     })
 }
@@ -46,12 +45,6 @@ fn expand_tilde(s: &str) -> String {
 }
 
 fn find_on_path(name: &str) -> Option<String> {
-    if name.contains('/') {
-        let expanded = expand_tilde(name);
-        return Path::new(&expanded)
-            .is_file()
-            .then(|| Path::new(&expanded).display().to_string());
-    }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .filter(|dir| !dir.as_os_str().is_empty())
@@ -60,15 +53,16 @@ fn find_on_path(name: &str) -> Option<String> {
         .map(|candidate| candidate.display().to_string())
 }
 
-fn find_in_fallback_dirs(name: &str) -> Option<String> {
-    fallback_dirs()
+// The Services host runs with a minimal PATH that misses Homebrew and ~/.local/bin.
+fn find_in_common_install_dirs(name: &str) -> Option<String> {
+    common_install_dirs()
         .iter()
         .map(|dir| Path::new(dir).join(name))
         .find(|candidate| candidate.is_file())
         .map(|candidate| candidate.display().to_string())
 }
 
-fn fallback_dirs() -> Vec<String> {
+fn common_install_dirs() -> Vec<String> {
     let mut dirs = vec![
         "/opt/homebrew/bin".to_string(),
         "/usr/local/bin".to_string(),
@@ -93,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_explicit_absolute_path() {
+    fn resolve_configured_absolute_path() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("my-opencode");
         std::fs::write(&bin, "#!/bin/sh\necho hi\n").unwrap();
@@ -109,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_explicit_missing_errors_clearly() {
+    fn resolve_configured_missing_errors_clearly() {
         let err = resolve_cli(Some("/nonexistent-xyz/proofd-opencode"), "opencode")
             .unwrap_err()
             .to_string();
@@ -117,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_explicit_bare_name_missing_errors_clearly() {
+    fn resolve_configured_bare_name_missing_errors_clearly() {
         let err = resolve_cli(Some("definitely-not-a-real-binary-xyz"), "opencode")
             .unwrap_err()
             .to_string();

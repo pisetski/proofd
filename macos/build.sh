@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds the self-contained proofd.app: the Objective-C NSServices host plus the
-# Rust proofd binary it runs, both in Contents/MacOS.
-# Output: proofd.app (in current dir or $1)
+# Builds proofd.app (into $1, default .): the Objective-C Services host and the
+# Rust proofd it runs, both in Contents/MacOS.
 
 APP_NAME="proofd.app"
 OUT_DIR="${1:-.}"
@@ -20,7 +19,8 @@ APP="$BUILD_DIR/$APP_NAME"
 BIN_DIR="$APP/Contents/MacOS"
 mkdir -p "$BIN_DIR"
 
-clang "$SCRIPT_DIR/ServiceHost.m" "$SCRIPT_DIR/Restyle.m" "$SCRIPT_DIR/Selection.m" \
+clang "$SCRIPT_DIR/ServiceHost.m" "$SCRIPT_DIR/ServiceLog.m" "$SCRIPT_DIR/BusyIndicator.m" \
+    "$SCRIPT_DIR/Restyle.m" "$SCRIPT_DIR/Selection.m" \
     -o "$BIN_DIR/proofd-service-host" \
     -framework AppKit \
     -framework Foundation \
