@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::prompt::build_revised_only;
-use crate::providers::{complete_with_timeout, Provider};
+use crate::providers::{complete_with_timeout, strip_wrapping_fence, Provider};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -37,10 +37,19 @@ pub async fn proofread_text<P: Provider>(
     let revised = complete_with_timeout(provider, &system, &user, timeout)
         .await
         .map_err(|e| ProofreadError::Provider(e.to_string()))?;
-    if revised.trim().is_empty() {
+    let revised = strip_wrapping_fence(&revised, input);
+    if revised.is_empty() {
         return Err(ProofreadError::EmptyOutput);
     }
-    Ok(revised)
+    Ok(with_surrounding_whitespace_of(input, revised))
+}
+
+// The result replaces the selection, so its edges must match: a triple-clicked line
+// keeps its newline and an indented line keeps its indent.
+fn with_surrounding_whitespace_of(input: &str, revised: &str) -> String {
+    let leading = &input[..input.len() - input.trim_start().len()];
+    let trailing = &input[input.trim_end().len()..];
+    format!("{leading}{}{trailing}", revised.trim())
 }
 
 #[cfg(test)]
@@ -78,6 +87,69 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(revised, "hello");
+    }
+
+    #[tokio::test]
+    async fn keeps_the_selections_surrounding_whitespace() {
+        let revised = proofread_text(
+            "    - fixd item\n",
+            &test_config(),
+            &EchoProvider("- fixed item".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revised, "    - fixed item\n");
+    }
+
+    #[tokio::test]
+    async fn does_not_double_an_indent_the_model_kept() {
+        let revised = proofread_text(
+            "    - fixd item\n",
+            &test_config(),
+            &EchoProvider("    - fixed item".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revised, "    - fixed item\n");
+    }
+
+    #[tokio::test]
+    async fn keeps_crlf_and_non_ascii_edges() {
+        let config = test_config();
+        let provider = EchoProvider("hello".into());
+        let crlf = proofread_text("helo\r\n", &config, &provider).await;
+        assert_eq!(crlf.unwrap(), "hello\r\n");
+        let nbsp = proofread_text("\u{a0}helo\u{3000}", &config, &provider).await;
+        assert_eq!(nbsp.unwrap(), "\u{a0}hello\u{3000}");
+    }
+
+    #[tokio::test]
+    async fn strips_a_fence_the_model_added_around_plain_text() {
+        let revised = proofread_text(
+            "helo",
+            &test_config(),
+            &EchoProvider("```\nhello\n```".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revised, "hello");
+    }
+
+    #[tokio::test]
+    async fn keeps_the_fence_of_a_selected_code_block() {
+        let block = "```\nlet x = 1;\n```";
+        let revised = proofread_text(block, &test_config(), &EchoProvider(block.into()))
+            .await
+            .unwrap();
+        assert_eq!(revised, block);
+    }
+
+    #[tokio::test]
+    async fn fence_with_nothing_inside_is_empty_output() {
+        let err = proofread_text("helo", &test_config(), &EchoProvider("```\n \n```".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProofreadError::EmptyOutput), "got: {err}");
     }
 
     #[tokio::test]

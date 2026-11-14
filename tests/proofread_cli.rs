@@ -554,6 +554,11 @@ fn service_failure_reasons_match_proofd_errors() {
             "some text",
             "Empty response",
         ),
+        (
+            Sandbox::with_provider_script("cat >/dev/null\nprintf '```\\n \\n```'"),
+            "some text",
+            "Empty response",
+        ),
     ];
 
     for (sandbox, input, expected) in cases {
