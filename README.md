@@ -3,7 +3,7 @@ A macOS service that proofreads selected text in place using an LLM CLI.
 ![Selected text corrected in place](docs/demo.gif)
 
 Select text, then right-click › Services › Proofread Selection.
-Or bind it to your own shortcut, like ⌘⌃⌥P.
+Or bind it to a shortcut your apps don't already use, like ⌃⇧,.
 
 It fixes errors only, and keeps your tone, language, and Markdown.
 Uses your existing `claude` or `opencode` login, so no API key is needed.
