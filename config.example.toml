@@ -6,7 +6,7 @@
 provider = "claude"
 
 # claude: an alias like "haiku" or "sonnet", or a full model id.
-# opencode: provider/model form, e.g. "opencode/mimo-v2.6-flash-free".
+# opencode: provider/model form, e.g. "opencode/deepseek-v4.1-flash-free".
 model = "haiku"
 
 # Path to the provider CLI. Needed only if it is outside PATH, Homebrew,

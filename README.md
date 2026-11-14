@@ -58,8 +58,9 @@ Measured on an M1 Pro after the first run, which also loads the model.
 Gemma 4 spends most of its time reasoning; a model without reasoning is
 faster.
 
-proofd uses `claude` with Haiku by default, or `opencode` if only it is
-installed. To use a local model, start the server in
+proofd uses `claude` with Haiku by default. If only `opencode` is installed,
+it uses DeepSeek V4.1 Flash Free, whose provider keeps no data and doesn't
+train on it. To use a local model, start the server in
 [LM Studio](https://lmstudio.ai), then create `~/.config/proofd/config.toml`:
 
 ```toml

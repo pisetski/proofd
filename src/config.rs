@@ -61,7 +61,7 @@ impl Config {
         if !is_installed("claude") && is_installed("opencode") {
             return Self {
                 provider: ProviderKind::Opencode,
-                model: "opencode/mimo-v2.6-flash-free".to_string(),
+                model: "opencode/deepseek-v4.1-flash-free".to_string(),
                 ..Self::default()
             };
         }
@@ -222,7 +222,7 @@ mod tests {
     fn without_file_falls_back_to_opencode_when_only_it_is_installed() {
         let cfg = Config::without_file(|name| name == "opencode");
         assert_eq!(cfg.provider, ProviderKind::Opencode);
-        assert_eq!(cfg.model, "opencode/mimo-v2.6-flash-free");
+        assert_eq!(cfg.model, "opencode/deepseek-v4.1-flash-free");
     }
 
     #[test]
