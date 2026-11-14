@@ -117,7 +117,7 @@ fn service_sends_and_returns_plain_and_rich_text() {
 #[test]
 fn build_compiles_every_host_source() {
     let build = read("macos/build.sh");
-    for source in ["ServiceHost.m", "Restyle.m"] {
+    for source in ["ServiceHost.m", "Restyle.m", "Selection.m"] {
         assert!(
             build.contains(&format!("\"$SCRIPT_DIR/{source}\"")),
             "build.sh must compile {source}"

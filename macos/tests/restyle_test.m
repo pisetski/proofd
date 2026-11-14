@@ -1,4 +1,4 @@
-// Run by tests/restyle.rs. Prints each failed expectation and exits 1 if any failed.
+// Run by tests/objc_units.rs. Prints each failed expectation and exits 1 if any failed.
 #import "../Restyle.h"
 
 static int failures = 0;

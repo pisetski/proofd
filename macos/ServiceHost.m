@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #import "Restyle.h"
+#import "Selection.h"
 
 static const unsigned long long kMaxLogBytes = 1024 * 1024;
 
@@ -313,16 +314,19 @@ static __weak CursorBusyIndicator *visibleIndicator;
     logMsg(@"Service invoked");
 
     NSData *rtf = [pasteboard dataForType:NSPasteboardTypeRTF];
-    NSAttributedString *styled = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
-    // The plain copy is the selection itself: Notes' RTF copy adds a line break, which
-    // would replace the selection and move the cursor to the next line.
-    NSString *text = [pasteboard stringForType:NSPasteboardTypeString] ?: styled.string;
-    if (!text || text.length == 0) {
+    NSAttributedString *richCopy = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
+    Selection *selection = [Selection selectionWithPlainCopy:[pasteboard stringForType:NSPasteboardTypeString]
+                                                    richCopy:richCopy];
+    NSString *text = selection.text;
+    NSAttributedString *styled = selection.styled;
+    if (text.length == 0) {
         logMsg(@"No text on pasteboard");
         if (error) *error = @"No text to proofread";
         return;
     }
-    logMsg(@"Got %@ text (%lu chars)", styled ? @"rich" : @"plain", (unsigned long)text.length);
+    logMsg(@"Got %@ text (%lu chars, %lu list bullets left out)", styled ? @"rich" : @"plain",
+           (unsigned long)text.length, (unsigned long)selection.bulletsLeftOut);
+    if (richCopy && !styled) logMsg(@"Rich copy differs from the selection; proofreading it as plain text");
 
     CursorBusyIndicator *busyIndicator = [[CursorBusyIndicator alloc] init];
 
