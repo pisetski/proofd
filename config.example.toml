@@ -15,7 +15,7 @@ model = "haiku"
 
 # Required for openai-compat. No API key is sent, so use a local server
 # such as LM Studio.
-# base_url = "http://localhost:11434/v1"
+# base_url = "http://localhost:1234/v1"
 
 # 1 to 600. From the Services menu the limit is about 30 seconds, because the
 # app you're typing in stops waiting for the result; higher values only apply
