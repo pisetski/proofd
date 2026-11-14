@@ -16,7 +16,7 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    // Fake HOME and XDG_CONFIG_HOME so the user's real config and skill never load.
+    // Fake HOME and XDG_CONFIG_HOME so the user's real config and prompt never load.
     // The stub inherits HOME, so scripts can leave evidence under "$HOME".
     fn with_provider_script(script: &str) -> Self {
         Self::with_provider_script_and_config(script, "timeout_secs = 10")

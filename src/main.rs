@@ -59,7 +59,7 @@ fn print_help() {
     println!("{USAGE}");
     println!();
     println!("config: {}", show(config::config_path()));
-    println!("prompt: {}", show(prompt::skill_path()));
+    println!("prompt: {}", show(prompt::prompt_path()));
     println!("Both are optional; see https://github.com/pisetski/proofd#configure");
 }
 
