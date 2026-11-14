@@ -5,16 +5,11 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub enum ProviderKind {
     #[default]
-    #[serde(rename = "claude", alias = "Claude")]
+    #[serde(rename = "claude")]
     Claude,
-    #[serde(rename = "opencode", alias = "Opencode", alias = "openCode")]
+    #[serde(rename = "opencode")]
     Opencode,
-    #[serde(
-        rename = "openai-compat",
-        alias = "openai_compat",
-        alias = "openai",
-        alias = "OpenAICompat"
-    )]
+    #[serde(rename = "openai-compat")]
     OpenAICompat,
 }
 

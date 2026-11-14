@@ -22,7 +22,7 @@ proofd sends your selection to the provider you choose, and nowhere else.
 - The model gets no tools, so selected text can't make it run commands.
 - With a local model, your text never leaves your Mac.
 
-Your provider's policy covers what it receives. The code is under 2,000
+Your provider's policy covers what it receives. The code is about 2,000
 lines; start with [`src/providers`](src/providers).
 
 ## Install
