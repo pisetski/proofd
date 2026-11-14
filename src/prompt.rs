@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+const SKILL_FILE: &str = "proofread.md";
 const EMBEDDED_SKILL: &str = include_str!("../skills/proofread.md");
 
 const REVISED_ONLY_CONSTRAINTS: &str = r#"Hard constraints (must follow exactly):
@@ -27,7 +28,11 @@ pub fn load_skill() -> String {
 }
 
 pub fn skill_candidate_paths() -> Vec<PathBuf> {
-    crate::config::candidate_paths("proofread.md")
+    crate::config::candidate_paths(SKILL_FILE)
+}
+
+pub fn skill_path() -> Option<PathBuf> {
+    crate::config::preferred_path(SKILL_FILE)
 }
 
 pub fn build_revised_only(input: &str) -> (String, String) {

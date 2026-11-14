@@ -1,3 +1,5 @@
+# proofd
+
 Fix typos and grammar in any macOS app, in place.
 
 ![Selected text corrected in place](docs/demo.gif)
@@ -17,8 +19,9 @@ proofd sends your selection to the provider you choose, and nowhere else.
   on a separate pasteboard.
 - It has no telemetry, and turns off the CLIs' update checks and
   `claude`'s telemetry.
-- It saves nothing. Logs record only the text's length, `claude` keeps no
-  session, and proofd deletes the session `opencode` keeps.
+- It saves nothing. Logs record the text's length and any error the
+  provider reports, `claude` keeps no session, and proofd deletes the
+  session `opencode` keeps.
 - The model gets no tools, so selected text can't make it run commands.
 - With a local model, your text never leaves your Mac.
 
@@ -37,7 +40,8 @@ make install
 ```
 
 This installs `proofd.app` to `~/Applications` and links the `proofd` command
-into `~/.local/bin`.
+into `~/.local/bin`. There is no prebuilt download: the app is signed only
+locally, so macOS would block a downloaded copy, but not one you build.
 
 Then enable **Proofread Selection** in System Settings › Keyboard › Keyboard
 Shortcuts › Services › Text, and assign a shortcut your apps don't already
@@ -59,9 +63,13 @@ Gemma 4 spends most of its time reasoning; a model without reasoning is
 faster.
 
 proofd uses `claude` with Haiku by default. If only `opencode` is installed,
-it uses DeepSeek V4.1 Flash Free, whose provider keeps no data and doesn't
-train on it. To use a local model, start the server in
-[LM Studio](https://lmstudio.ai), then create `~/.config/proofd/config.toml`:
+it uses DeepSeek V4.1 Flash Free, which is free for a limited time and whose
+provider
+[keeps no data and doesn't train on it](https://opencode.ai/docs/zen/#privacy).
+When it stops being free, set `model` to another one.
+
+To use a local model, start the server in [LM Studio](https://lmstudio.ai),
+then create `~/.config/proofd/config.toml`:
 
 ```toml
 provider = "openai-compat"
@@ -75,9 +83,10 @@ below that.
 
 ## Configure
 
-Every setting is optional. See
-[`config.example.toml`](config.example.toml) for the model, timeout, and
-input limit.
+Every setting is optional, except that `openai-compat` needs `base_url` and
+`model`. See [`config.example.toml`](config.example.toml) for the model,
+timeout, and input limit. `proofd --help` shows where proofd looks for its
+files.
 
 To change the prompt, copy `skills/proofread.md` to
 `~/.config/proofd/proofread.md` and edit it.
@@ -99,6 +108,9 @@ the model you pick, follows a prompt you can edit, and works in the terminal.
 ```sh
 make uninstall
 ```
+
+This keeps your config in `~/.config/proofd` and the log in
+`~/Library/Logs/proofd-service.log`.
 
 ## License
 

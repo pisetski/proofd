@@ -1,6 +1,6 @@
-use proofd_lib::config;
 use proofd_lib::proofread::proofread_text;
 use proofd_lib::providers::{forget_sessions, from_config, FORGET_SESSIONS_FLAG};
+use proofd_lib::{config, prompt};
 use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 use tokio::signal::unix::{signal, SignalKind};
@@ -14,9 +14,11 @@ type Outcome = Result<(), Box<dyn std::error::Error>>;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     // stderr, not stdout: stdout carries the revised text and nothing else.
+    // Warn by default: editor filters like vim's `:!proofd` paste stderr along with stdout.
+    // The service host sets RUST_LOG=info for its log.
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
         )
         .with_writer(std::io::stderr)
         .with_ansi(std::io::stderr().is_terminal())
@@ -27,7 +29,7 @@ async fn main() -> ExitCode {
         None if !std::io::stdin().is_terminal() => proofread_until_terminated().await,
         Some(FORGET_SESSIONS_FLAG) => forget_opencode_sessions(&args[2..]),
         Some("-h" | "--help") => {
-            println!("{USAGE}");
+            print_help();
             Ok(())
         }
         Some("-V" | "--version") => {
@@ -46,6 +48,19 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_help() {
+    let show = |path: Option<std::path::PathBuf>| match path {
+        Some(p) if p.exists() => p.display().to_string(),
+        Some(p) => format!("{} (not found, using defaults)", p.display()),
+        None => "<no config directory>".to_string(),
+    };
+    println!("{USAGE}");
+    println!();
+    println!("config: {}", show(config::config_path()));
+    println!("prompt: {}", show(prompt::skill_path()));
+    println!("Both are optional; see https://github.com/pisetski/proofd#configure");
 }
 
 // The service host sends SIGTERM at its deadline. Dropping the proofread kills the

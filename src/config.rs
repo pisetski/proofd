@@ -13,6 +13,16 @@ pub enum ProviderKind {
     OpenAICompat,
 }
 
+impl ProviderKind {
+    fn default_model(self) -> Option<&'static str> {
+        match self {
+            Self::Claude => Some("haiku"),
+            Self::Opencode => Some("opencode/deepseek-v4.1-flash-free"),
+            Self::OpenAICompat => None,
+        }
+    }
+}
+
 impl std::fmt::Display for ProviderKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -27,7 +37,7 @@ impl std::fmt::Display for ProviderKind {
 pub struct Config {
     #[serde(default)]
     pub provider: ProviderKind,
-    #[serde(default = "default_model")]
+    #[serde(default)]
     pub model: String,
     #[serde(default)]
     pub base_url: Option<String>,
@@ -39,10 +49,6 @@ pub struct Config {
     pub max_input_chars: usize,
 }
 
-fn default_model() -> String {
-    "haiku".to_string()
-}
-
 fn default_timeout_secs() -> u64 {
     15
 }
@@ -52,13 +58,20 @@ fn default_max_input_chars() -> usize {
 }
 
 impl Config {
+    fn for_provider(provider: ProviderKind) -> Self {
+        Self {
+            provider,
+            model: provider.default_model().unwrap_or_default().to_string(),
+            base_url: None,
+            provider_bin: None,
+            timeout_secs: default_timeout_secs(),
+            max_input_chars: default_max_input_chars(),
+        }
+    }
+
     fn without_file(is_installed: impl Fn(&str) -> bool) -> Self {
         if !is_installed("claude") && is_installed("opencode") {
-            return Self {
-                provider: ProviderKind::Opencode,
-                model: "opencode/deepseek-v4.1-flash-free".to_string(),
-                ..Self::default()
-            };
+            return Self::for_provider(ProviderKind::Opencode);
         }
         Self::default()
     }
@@ -70,14 +83,7 @@ fn cli_installed(name: &str) -> bool {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            provider: ProviderKind::default(),
-            model: default_model(),
-            base_url: None,
-            provider_bin: None,
-            timeout_secs: default_timeout_secs(),
-            max_input_chars: default_max_input_chars(),
-        }
+        Self::for_provider(ProviderKind::default())
     }
 }
 
@@ -115,12 +121,12 @@ pub fn candidate_paths(filename: &str) -> Vec<PathBuf> {
     out
 }
 
-pub fn config_candidates() -> Vec<PathBuf> {
-    candidate_paths("config.toml")
+pub fn config_path() -> Option<PathBuf> {
+    preferred_path("config.toml")
 }
 
-pub fn config_path() -> Option<PathBuf> {
-    let candidates = config_candidates();
+pub fn preferred_path(filename: &str) -> Option<PathBuf> {
+    let candidates = candidate_paths(filename);
     candidates
         .iter()
         .find(|p| p.exists())
@@ -155,7 +161,13 @@ fn validate(cfg: &mut Config, path_for_errors: &str) -> Result<(), ConfigError> 
         msg: msg.to_string(),
     };
     if cfg.model.trim().is_empty() {
-        return Err(invalid("`model` must not be empty"));
+        let Some(model) = cfg.provider.default_model() else {
+            return Err(invalid(&format!(
+                "`model` is required when provider = \"{}\"",
+                cfg.provider
+            )));
+        };
+        cfg.model = model.to_string();
     }
     if cfg.timeout_secs == 0 || cfg.timeout_secs > 600 {
         return Err(invalid("`timeout_secs` must be in 1..=600"));
@@ -253,6 +265,27 @@ max_input_chars = 2000
             .unwrap_err()
             .to_string();
         assert!(err.contains("base_url"), "got: {err}");
+    }
+
+    #[test]
+    fn model_defaults_to_the_providers_own() {
+        assert_eq!(parse_toml("", "p").unwrap().model, "haiku");
+        let cfg = parse_toml("provider = \"opencode\"\nmodel = \" \"", "p").unwrap();
+        assert_eq!(cfg.model, "opencode/deepseek-v4.1-flash-free");
+    }
+
+    #[test]
+    fn openai_compat_requires_a_model() {
+        let err = parse_toml(
+            "provider = \"openai-compat\"\nbase_url = \"http://localhost:1234/v1\"",
+            "p",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("`model` is required when provider = \"openai-compat\""),
+            "got: {err}"
+        );
     }
 
     #[test]

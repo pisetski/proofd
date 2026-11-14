@@ -1,13 +1,15 @@
-# Copy to ~/.config/proofd/config.toml. Every key is optional.
+# Copy to ~/.config/proofd/config.toml. Every key is optional, except that
+# openai-compat needs `base_url` and `model`.
 # Without a config file, proofd uses claude, or opencode if only it is installed.
 # An invalid file makes proofd fail with an error instead of falling back.
 
 # "claude" | "opencode" | "openai-compat"
 provider = "claude"
 
-# claude: an alias like "haiku" or "sonnet", or a full model id.
-# opencode: provider/model form, e.g. "opencode/deepseek-v4.1-flash-free".
-model = "haiku"
+# claude: an alias like "haiku" or "sonnet", or a full model id. Default "haiku".
+# opencode: provider/model form. Default "opencode/deepseek-v4.1-flash-free".
+# openai-compat: required; the id your server lists, e.g. "google/gemma-4-e4b".
+# model = "haiku"
 
 # Path to the provider CLI. Needed only if it is outside PATH, Homebrew,
 # ~/.local/bin, ~/.cargo/bin, ~/.opencode/bin, or ~/.bun/bin.

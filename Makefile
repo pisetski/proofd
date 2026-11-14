@@ -3,6 +3,7 @@ SERVICE_LOG_PREDICATE := process == "proofd-service-host" AND (messageType == er
 
 APP_PATH := $(HOME)/Applications/proofd.app
 CLI_LINK := $(HOME)/.local/bin/proofd
+CACHE_DIR := $(HOME)/Library/Caches/proofd
 LSREGISTER := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 .PHONY: build install uninstall logs clear-logs test-service
@@ -17,7 +18,7 @@ install:
 uninstall:
 	pkill -f "$(APP_PATH)/Contents/MacOS/proofd-service-host" || true
 	"$(LSREGISTER)" -u "$(APP_PATH)" || true
-	rm -rf "$(APP_PATH)"
+	rm -rf "$(APP_PATH)" "$(CACHE_DIR)"
 	[ ! -L "$(CLI_LINK)" ] || rm "$(CLI_LINK)"
 	/System/Library/CoreServices/pbs -update
 

@@ -1,8 +1,9 @@
 use super::cli_resolver::resolve_cli;
 use super::sanitize::sanitize_output;
 use super::{Provider, ProviderError};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::sync::OnceLock;
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;
@@ -43,6 +44,7 @@ fn claude_args(model: &str, system: &str) -> Vec<String> {
         "text",
         "--tools",
         "",
+        "--strict-mcp-config",
         "--no-session-persistence",
         "--disable-slash-commands",
         "--setting-sources",
@@ -96,13 +98,27 @@ pub(super) async fn run_cli(
         total.elapsed().as_millis(),
     );
     if !output.status.success() {
-        return Err(ProviderError::Failed(format!(
-            "{name} exited {}: {}",
+        return Err(ProviderError::Failed(exit_failure(
+            name,
             output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            &String::from_utf8_lossy(&output.stderr),
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn exit_failure(name: &str, status: ExitStatus, stderr: &str) -> String {
+    let how = match status.code() {
+        Some(code) => format!("exited with code {code}"),
+        None => format!(
+            "was killed by signal {}",
+            status.signal().unwrap_or_default()
+        ),
+    };
+    match stderr.trim() {
+        "" => format!("{name} {how}"),
+        detail => format!("{name} {how}: {detail}"),
+    }
 }
 
 // Agentic CLIs pick up skills and project files from their cwd, which turned revisions into essays.
@@ -153,7 +169,30 @@ mod tests {
         assert!(has_pair("--setting-sources", ""));
         assert!(has_pair("--system-prompt", "SYSTEM"));
         assert!(has_pair("--model", "haiku"));
-        assert!(args.contains(&"--no-session-persistence".to_string()));
-        assert!(args.contains(&"--disable-slash-commands".to_string()));
+        for flag in [
+            "--strict-mcp-config",
+            "--no-session-persistence",
+            "--disable-slash-commands",
+        ] {
+            assert!(args.contains(&flag.to_string()), "missing {flag}");
+        }
+    }
+
+    #[test]
+    fn exit_failure_names_the_code_and_omits_empty_stderr() {
+        let exit_1 = ExitStatus::from_raw(1 << 8);
+        assert_eq!(
+            exit_failure("claude", exit_1, " \n"),
+            "claude exited with code 1"
+        );
+        assert_eq!(
+            exit_failure("claude", exit_1, "key expired\n"),
+            "claude exited with code 1: key expired"
+        );
+        let killed = ExitStatus::from_raw(9);
+        assert_eq!(
+            exit_failure("opencode", killed, ""),
+            "opencode was killed by signal 9"
+        );
     }
 }

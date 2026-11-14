@@ -324,6 +324,9 @@ static __weak CursorBusyIndicator *visibleIndicator;
 
     NSTask *task = [[NSTask alloc] init];
     task.executableURL = [NSURL fileURLWithPath:proofdPath];
+    NSMutableDictionary *environment = [[[NSProcessInfo processInfo] environment] mutableCopy];
+    if (!environment[@"RUST_LOG"]) environment[@"RUST_LOG"] = @"info";
+    task.environment = environment;
     task.standardInput = inputPipe;
     task.standardOutput = outputPipe;
     task.standardError = errorPipe;

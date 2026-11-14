@@ -171,7 +171,7 @@ fn passes_input_to_provider_and_prints_only_revised_text() {
 fn logs_go_to_stderr_not_stdout() {
     let sandbox = Sandbox::with_provider_script("cat >/dev/null\necho 'Fixed.'");
 
-    let out = sandbox.proofread("fixd");
+    let out = sandbox.proofread_with_env("fixd", &[("RUST_LOG", "info")]);
 
     let stderr = text(&out.stderr);
     assert!(stderr.contains("proofread start"), "stderr: {stderr}");
@@ -217,6 +217,17 @@ fn rejects_blank_input_without_calling_provider() {
     assert!(!out.status.success());
     assert_eq!(text(&out.stdout), "");
     assert!(!sandbox.path("called").exists());
+}
+
+// Editor filters like vim's `:'<,'>!proofd` replace the selection with stdout and stderr.
+#[test]
+fn default_stderr_carries_no_progress_lines() {
+    let sandbox = Sandbox::with_provider_script("cat >/dev/null\necho 'Fixed.'");
+
+    let out = sandbox.proofread("fixd");
+
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
 }
 
 #[test]
@@ -607,7 +618,7 @@ fn service_failure_reasons_match_proofd_errors() {
         (not_executable, "some text", "Can't start provider"),
         (
             Sandbox::with_config(
-                "provider = \"openai-compat\"\nbase_url = \"http://127.0.0.1:1/v1\"\ntimeout_secs = 5",
+                "provider = \"openai-compat\"\nmodel = \"local-model\"\nbase_url = \"http://127.0.0.1:1/v1\"\ntimeout_secs = 5",
             ),
             "some text",
             "Can't reach provider",
