@@ -17,21 +17,32 @@ impl Sandbox {
     // Fake HOME and XDG_CONFIG_HOME so the user's real config and skill never load.
     // The stub inherits HOME, so scripts can leave evidence under "$HOME".
     fn with_provider_script(script: &str) -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let stub = dir.path().join("fake-claude");
+        Self::with_provider_script_and_config(script, "timeout_secs = 10")
+    }
+
+    fn with_provider_script_and_config(script: &str, extra_config: &str) -> Self {
+        let sandbox = Self::with_config("");
+        let stub = sandbox.path("fake-claude");
         std::fs::write(&stub, format!("#!/bin/sh\n{script}\n")).unwrap();
         std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let config_dir = dir.path().join("xdg/proofd");
-        std::fs::create_dir_all(&config_dir).unwrap();
-        std::fs::write(
-            config_dir.join("config.toml"),
-            format!(
-                "provider = \"claude\"\nmodel = \"haiku\"\nprovider_bin = \"{}\"\ntimeout_secs = 10\n",
-                stub.display()
-            ),
-        )
-        .unwrap();
-        Self { dir }
+        sandbox.write_config(&format!(
+            "provider = \"claude\"\nmodel = \"haiku\"\nprovider_bin = \"{}\"\n{extra_config}\n",
+            stub.display()
+        ));
+        sandbox
+    }
+
+    fn with_config(config: &str) -> Self {
+        let sandbox = Self {
+            dir: tempfile::tempdir().unwrap(),
+        };
+        std::fs::create_dir_all(sandbox.path("xdg/proofd")).unwrap();
+        sandbox.write_config(config);
+        sandbox
+    }
+
+    fn write_config(&self, config: &str) {
+        std::fs::write(self.path("xdg/proofd/config.toml"), config).unwrap();
     }
 
     fn path(&self, rel: &str) -> PathBuf {
@@ -150,4 +161,95 @@ fn version_flag_prints_version() {
 
     assert!(out.status.success());
     assert!(text(&out.stdout).starts_with("proofd "));
+}
+
+// The service host turns proofd's last "proofd: " stderr line into a few words for the
+// failure pill by prefix (`shortFailureReason` in macos/ServiceHost.m); reworded errors
+// must not silently degrade to the generic reason.
+fn service_failure_reasons() -> Vec<(String, String)> {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("macos/ServiceHost.m"),
+    )
+    .unwrap();
+    let table_start = source.find("*reasons = @[").expect("reason table");
+    let table = &source[table_start..];
+    let table = &table[..table.find("];").unwrap()];
+    table
+        .lines()
+        .filter_map(|line| {
+            let entry = line.trim().strip_prefix("@[@\"")?.strip_suffix("\"],")?;
+            let (prefix, reason) = entry.split_once("\", @\"")?;
+            Some((prefix.to_string(), reason.to_string()))
+        })
+        .collect()
+}
+
+fn pill_reason(out: &Output) -> String {
+    let stderr = text(&out.stderr);
+    let message = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("proofd: "))
+        .last()
+        .unwrap_or_else(|| panic!("no `proofd: ` line in stderr: {stderr}"));
+    service_failure_reasons()
+        .into_iter()
+        .find(|(prefix, _)| message.starts_with(prefix.as_str()))
+        .map(|(_, reason)| reason)
+        .unwrap_or_else(|| "Proofread failed".to_string())
+}
+
+#[test]
+fn service_failure_reasons_match_proofd_errors() {
+    let missing_bin = Sandbox::with_config("provider_bin = \"/nonexistent/claude\"");
+    let not_executable = Sandbox::with_config("");
+    std::fs::write(not_executable.path("claude"), "").unwrap();
+    not_executable.write_config(&format!(
+        "provider_bin = \"{}\"",
+        not_executable.path("claude").display()
+    ));
+    let unreadable_config = Sandbox::with_config("");
+    std::fs::remove_file(unreadable_config.path("xdg/proofd/config.toml")).unwrap();
+    std::fs::create_dir(unreadable_config.path("xdg/proofd/config.toml")).unwrap();
+
+    let cases = [
+        (
+            Sandbox::with_provider_script_and_config("sleep 5", "timeout_secs = 1"),
+            "some text",
+            "Timed out",
+        ),
+        (missing_bin, "some text", "Can't start provider"),
+        (not_executable, "some text", "Can't start provider"),
+        (
+            Sandbox::with_config(
+                "provider = \"openai-compat\"\nbase_url = \"http://127.0.0.1:1/v1\"\ntimeout_secs = 5",
+            ),
+            "some text",
+            "Can't reach provider",
+        ),
+        (
+            Sandbox::with_provider_script("cat >/dev/null\necho 'model \"x\" not found' >&2\nexit 1"),
+            "some text",
+            "Provider error",
+        ),
+        (Sandbox::with_config("timeout_secs = 0"), "some text", "Check proofd config"),
+        (unreadable_config, "some text", "Check proofd config"),
+        (Sandbox::with_config("max_input_chars = 3"), "some text", "Selection too long"),
+        (Sandbox::with_provider_script("touch \"$HOME/called\""), "  \n ", "No text selected"),
+        (
+            Sandbox::with_provider_script("cat >/dev/null\necho '   '"),
+            "some text",
+            "Empty response",
+        ),
+    ];
+
+    for (sandbox, input, expected) in cases {
+        let out = sandbox.proofread(input);
+        assert!(!out.status.success());
+        assert_eq!(
+            pill_reason(&out),
+            expected,
+            "stderr: {}",
+            text(&out.stderr)
+        );
+    }
 }

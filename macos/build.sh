@@ -24,6 +24,7 @@ clang "$SCRIPT_DIR/ServiceHost.m" \
     -o "$BIN_DIR/proofd-service-host" \
     -framework AppKit \
     -framework Foundation \
+    -framework Symbols \
     -fobjc-arc \
     -mmacosx-version-min=14.0
 cp "$REPO_ROOT/target/release/proofd" "$BIN_DIR/proofd"
