@@ -1,5 +1,5 @@
 use super::cli_resolver::resolve_cli;
-use super::sanitize::{sanitize_output, strip_session_headers};
+use super::sanitize::sanitize_output;
 use super::{Provider, ProviderError};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -10,12 +10,6 @@ use tokio::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct ClaudeCli {
-    pub model: String,
-    pub bin: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct OpencodeCli {
     pub model: String,
     pub bin: Option<String>,
 }
@@ -34,30 +28,6 @@ impl Provider for ClaudeCli {
         )
         .await?;
         sanitize_output(&stdout)
-    }
-}
-
-#[async_trait::async_trait]
-impl Provider for OpencodeCli {
-    async fn complete(&self, system: &str, user: &str) -> Result<String, ProviderError> {
-        let mut args = ["run", "--model", &self.model, "--format", "default"]
-            .map(String::from)
-            .to_vec();
-        let sandbox = cli_sandbox_dir();
-        if let Some(dir) = &sandbox {
-            args.extend(["--dir".to_string(), dir.display().to_string()]);
-        }
-        let prompt = format!("{system}\n\n{user}");
-        let stdout = run_cli(
-            "opencode",
-            self.bin.as_deref(),
-            &args,
-            &[],
-            &prompt,
-            sandbox.as_deref(),
-        )
-        .await?;
-        sanitize_output(&strip_session_headers(&stdout))
     }
 }
 
@@ -84,7 +54,7 @@ fn claude_args(model: &str, system: &str) -> Vec<String> {
     .to_vec()
 }
 
-async fn run_cli(
+pub(super) async fn run_cli(
     name: &str,
     explicit_bin: Option<&str>,
     args: &[String],

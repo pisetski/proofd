@@ -1,7 +1,5 @@
 use super::ProviderError;
 
-const SESSION_HEADER_PREFIXES: [&str; 4] = ["Session:", "Thinking:", "model:", "opencode:"];
-
 pub fn sanitize_output(raw: &str) -> Result<String, ProviderError> {
     let unfenced = strip_single_fence(raw.trim()).trim();
     if unfenced.is_empty() {
@@ -24,21 +22,6 @@ fn strip_single_fence(trimmed: &str) -> &str {
         return trimmed;
     }
     trimmed[opening_fence_end + 1..closing_fence_start].trim_matches('\n')
-}
-
-pub fn strip_session_headers(output: &str) -> String {
-    output
-        .lines()
-        .skip_while(|line| is_session_header(line))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn is_session_header(line: &str) -> bool {
-    let line = line.trim();
-    SESSION_HEADER_PREFIXES
-        .iter()
-        .any(|prefix| line.starts_with(prefix))
 }
 
 #[cfg(test)]
@@ -80,16 +63,5 @@ mod tests {
     fn sanitize_does_not_strip_partial_fences() {
         let s = "Use ```rust for code";
         assert_eq!(sanitize_output(s).unwrap(), "Use ```rust for code");
-    }
-
-    #[test]
-    fn session_headers_stripped_only_at_start() {
-        let output = "Session: abc\nThinking: hmm\nhello\nSession: kept";
-        assert_eq!(strip_session_headers(output), "hello\nSession: kept");
-    }
-
-    #[test]
-    fn output_without_headers_is_unchanged() {
-        assert_eq!(strip_session_headers("hello\nworld"), "hello\nworld");
     }
 }

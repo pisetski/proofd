@@ -1,6 +1,6 @@
 use proofd_lib::config;
 use proofd_lib::proofread::proofread_text;
-use proofd_lib::providers::from_config;
+use proofd_lib::providers::{forget_sessions, from_config, FORGET_SESSIONS_FLAG};
 use std::io::{IsTerminal, Read};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -18,8 +18,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_ansi(std::io::stderr().is_terminal())
         .init();
 
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
         None if !std::io::stdin().is_terminal() => proofread().await,
+        Some(FORGET_SESSIONS_FLAG) => forget_opencode_sessions(&args[2..]),
         Some("-h" | "--help") => {
             println!("{USAGE}");
             Ok(())
@@ -74,4 +76,16 @@ async fn proofread() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     }
+}
+
+// Internal: proofd starts itself detached with this flag so deleting opencode's saved
+// sessions never delays pasting the result.
+fn forget_opencode_sessions(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [bin, dir, cutoff_ms] = args else {
+        return Err(
+            format!("usage: proofd {FORGET_SESSIONS_FLAG} <opencode> <dir> <cutoff-ms>").into(),
+        );
+    };
+    forget_sessions(bin, std::path::Path::new(dir), cutoff_ms.parse()?)?;
+    Ok(())
 }

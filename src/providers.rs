@@ -1,16 +1,18 @@
 mod cli_provider;
 mod cli_resolver;
 mod openai_compat;
+mod opencode;
 mod sanitize;
 
 use crate::config::{Config, ProviderKind};
 use std::time::Duration;
 use thiserror::Error;
 
-pub use cli_provider::{cli_sandbox_dir, ClaudeCli, OpencodeCli};
+pub use cli_provider::{cli_sandbox_dir, ClaudeCli};
 pub use cli_resolver::resolve_cli;
 pub use openai_compat::OpenAICompat;
-pub use sanitize::{sanitize_output, strip_session_headers};
+pub use opencode::{forget_sessions, OpencodeCli, FORGET_SESSIONS_FLAG};
+pub use sanitize::sanitize_output;
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
