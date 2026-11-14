@@ -319,7 +319,7 @@ fn opencode_runs_a_tool_less_agent_and_prints_its_reply() {
     assert_eq!(agent["permission"]["*"], "deny", "config: {config}");
     let system = agent["prompt"].as_str().unwrap_or_default();
     assert!(
-        system.contains("Return ONLY the polished text."),
+        system.contains("Return ONLY the corrected text."),
         "config: {config}"
     );
     let env = lines(sandbox.path("env.txt"));
