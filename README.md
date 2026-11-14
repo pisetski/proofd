@@ -114,4 +114,4 @@ This keeps your config in `~/.config/proofd` and the log in
 
 ## License
 
-MIT or Apache-2.0.
+GPL-3.0-only. See [LICENSE](LICENSE).
