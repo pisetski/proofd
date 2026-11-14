@@ -297,7 +297,7 @@ static __weak CursorBusyIndicator *visibleIndicator;
         if (error) *error = @"No text to proofread";
         return;
     }
-    logMsg(@"Got text: %@", [text substringToIndex:MIN(text.length, 50)]);
+    logMsg(@"Got text (%lu chars)", (unsigned long)text.length);
 
     CursorBusyIndicator *busyIndicator = [[CursorBusyIndicator alloc] init];
 
@@ -374,7 +374,7 @@ static __weak CursorBusyIndicator *visibleIndicator;
         if (error) *error = @"Failed to read proofd output";
         return;
     }
-    logMsg(@"Got result: %@", [result substringToIndex:MIN(result.length, 50)]);
+    logMsg(@"Got result (%lu chars)", (unsigned long)result.length);
     [busyIndicator finishWithSuccess];
 
     [pasteboard clearContents];
