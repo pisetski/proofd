@@ -60,11 +60,13 @@ apps, can't use proofd.
 | --------------- | -------------------------- | -------------------- |
 | `claude`        | Anthropic                  | 2 s with Haiku       |
 | `opencode`      | The provider of your model | 2 s plus the model   |
-| `openai-compat` | The server at `base_url`   | 13–15 s with Gemma 4 |
+| `openai-compat` | The server at `base_url`   | 0.5 s with Qwen3 4B  |
 
-Measured on an M1 Pro after the first run, which also loads the model.
-Gemma 4 spends most of its time reasoning; a model without reasoning is
-faster.
+Measured on an M1 Pro after the first run, which also loads the model, with
+Qwen3 4B Instruct 2507 in LM Studio. A five-sentence paragraph takes 1.1–1.6 s
+with Qwen3 and 2 s with Haiku. Qwen3 catches most errors but can miss some
+in a sentence full of them. Avoid models that reason, like Gemma 4: they take
+over 30 seconds on a paragraph, past the Services menu's limit.
 
 proofd uses `claude` with Haiku by default. If only `opencode` is installed,
 it uses DeepSeek V4.1 Flash Free, which is free for a limited time, up to a
@@ -80,7 +82,7 @@ then create `~/.config/proofd/config.toml`. proofd sends no API key, so
 ```toml
 provider = "openai-compat"
 base_url = "http://localhost:1234/v1"
-model = "google/gemma-4-e4b"
+model = "qwen/qwen3-4b-2507"
 timeout_secs = 25
 ```
 

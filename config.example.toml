@@ -8,7 +8,7 @@ provider = "claude"
 
 # claude: an alias like "haiku" or "sonnet", or a full model id. Default "haiku".
 # opencode: provider/model form. Default "opencode/deepseek-v4.1-flash-free".
-# openai-compat: required; the id your server lists, e.g. "google/gemma-4-e4b".
+# openai-compat: required; the id your server lists, e.g. "qwen/qwen3-4b-2507".
 # model = "haiku"
 
 # Path to the provider CLI. Needed only if it is outside PATH, Homebrew,
