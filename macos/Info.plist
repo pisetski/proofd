@@ -22,8 +22,6 @@
 	<string>Copyright © 2026 proofd. All rights reserved.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSServices</key>
 	<array>
 		<dict>
@@ -44,19 +42,6 @@
 			<array>
 				<string>NSStringPboardType</string>
 			</array>
-		</dict>
-		<dict>
-			<key>NSMenuItem</key>
-			<dict>
-				<key>default</key>
-				<string>Proofread Clipboard</string>
-			</dict>
-			<key>NSMessage</key>
-			<string>proofreadClipboardService</string>
-			<key>NSPortName</key>
-			<string>proofd</string>
-			<key>NSRequiredContext</key>
-			<dict/>
 		</dict>
 	</array>
 </dict>

@@ -21,13 +21,10 @@ BIN_DIR="$APP/Contents/MacOS"
 mkdir -p "$BIN_DIR"
 
 clang "$SCRIPT_DIR/ServiceHost.m" \
-    "$SCRIPT_DIR/ProofreadProcess.m" \
-    "$SCRIPT_DIR/ResultPanel.m" \
     -o "$BIN_DIR/proofd-service-host" \
     -framework AppKit \
     -framework Foundation \
     -fobjc-arc \
-    -fblocks \
     -mmacosx-version-min=14.0
 cp "$REPO_ROOT/target/release/proofd" "$BIN_DIR/proofd"
 cp "$SCRIPT_DIR/Info.plist" "$APP/Contents/Info.plist"

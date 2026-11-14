@@ -42,8 +42,6 @@ pub struct Config {
     pub timeout_secs: u64,
     #[serde(default = "default_max_input_chars")]
     pub max_input_chars: usize,
-    #[serde(default)]
-    pub show_result_popup: bool,
 }
 
 fn default_model() -> String {
@@ -84,7 +82,6 @@ impl Default for Config {
             provider_bin: None,
             timeout_secs: default_timeout_secs(),
             max_input_chars: default_max_input_chars(),
-            show_result_popup: false,
         }
     }
 }

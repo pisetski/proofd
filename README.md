@@ -25,11 +25,6 @@ into `~/.local/bin`, which must be on your `PATH` to use it from the terminal.
 Then enable **Proofread Selection** in System Settings › Keyboard › Keyboard
 Shortcuts › Services › Text, and assign your shortcut.
 
-For copy-first use, assign a separate shortcut to **Proofread Clipboard** under
-Services. Press ⌘C, invoke that shortcut, then press ⌘V once proofreading finishes.
-Without a popup, the menu-bar proofreading icon disappears when finished.
-This action doesn't require the app to provide selected text.
-
 ## Terminal
 
 ```sh
@@ -48,17 +43,6 @@ cp config.example.toml ~/.config/proofd/config.toml
 
 To change the prompt, copy `skills/proofread.md` to
 `~/.config/proofd/proofread.md` and edit it.
-
-### Result popup
-
-To show a result popup for either action, add to your config:
-
-```toml
-show_result_popup = true
-```
-
-Use the same shortcut, wait for **Copied**, then press ⌘V. Click outside to dismiss.
-Requires the app to support macOS Services; no additional permissions needed.
 
 ## Uninstall
 
