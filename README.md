@@ -4,6 +4,8 @@ A macOS service that proofreads selected text in place using an LLM CLI.
 
 Select text, then right-click › Services › Proofread Selection.
 Or bind it to a shortcut your apps don't already use, like ⌃⇧,.
+Always select the text first: with nothing selected, some apps like Firefox
+send the whole field and insert the result at the cursor.
 
 It fixes errors only, and keeps your tone, language, and Markdown.
 Uses your existing `claude` or `opencode` login, so no API key is needed.
