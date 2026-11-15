@@ -105,6 +105,20 @@ To change the prompt, copy `prompts/proofread.md` to
 echo "helo world" | proofd
 ```
 
+## Troubleshooting
+
+The Services menu shows only a short reason, such as "Can't start provider".
+The detail is in `~/Library/Logs/proofd-service.log`; from the repository,
+`make logs` follows it.
+
+| Reason                 | What to try                                                       |
+| ---------------------- | ----------------------------------------------------------------- |
+| Can't start provider   | Set `provider_bin` in the config to the full path of the CLI.     |
+| Timed out              | Raise `timeout_secs` (the menu allows about 30), or select less.  |
+| Provider error         | The log has the provider's own message, such as an expired login. |
+| Unexpected reply       | The model's reply wasn't your corrected text. Try again.          |
+| Contains an attachment | Select only the text; proofreading would delete the image.        |
+
 ## Why a language model?
 
 Rule-based checkers like Harper, LanguageTool, and the macOS spellchecker are

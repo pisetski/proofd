@@ -258,6 +258,14 @@ fn config_error_is_reported_once_in_plain_words() {
 }
 
 fn opencode_stub_with_proofd_and_user_sessions(on_run: &str) -> String {
+    opencode_stub_with_session_commands(
+        on_run,
+        r#"printf '[{"id":"ses_proofd","directory":"%s","created":1,"updated":1,"title":"t"},{"id":"ses_user","directory":"/Users/me/project","created":1,"updated":1,"title":"t"}]' "$HOME/Library/Caches/proofd/cli-sandbox""#,
+        r#"echo "$3" >> "$HOME/deleted.txt""#,
+    )
+}
+
+fn opencode_stub_with_session_commands(on_run: &str, on_list: &str, on_delete: &str) -> String {
     format!(
         r#"case "$1" in
 run)
@@ -268,8 +276,8 @@ run)
   ;;
 session)
   case "$2" in
-  list) printf '[{{"id":"ses_proofd","directory":"%s","created":1,"updated":1,"title":"t"}},{{"id":"ses_user","directory":"/Users/me/project","created":1,"updated":1,"title":"t"}}]' "$HOME/Library/Caches/proofd/cli-sandbox" ;;
-  delete) echo "$3" >> "$HOME/deleted.txt" ;;
+  list) {on_list} ;;
+  delete) {on_delete} ;;
   esac
   ;;
 esac"#
@@ -317,6 +325,7 @@ fn opencode_runs_a_tool_less_agent_and_prints_its_reply() {
         Some("run"),
         "args: {args:?}"
     );
+    assert!(args.contains(&"--pure".to_string()), "args: {args:?}");
     assert!(has_pair(&args, "--agent", "proofd"), "args: {args:?}");
     assert!(
         has_pair(&args, "--model", "opencode/some-model"),
@@ -388,6 +397,106 @@ fn eventually(condition: impl Fn() -> bool) -> bool {
         std::thread::sleep(std::time::Duration::from_millis(50));
         condition()
     })
+}
+
+const SERVICE_LOG: &str = "Library/Logs/proofd-service.log";
+
+fn forget_sessions_with(on_list: &str, on_delete: &str) -> Output {
+    let home = FakeHome::with_cli_stub(
+        "opencode",
+        "opencode/some-model",
+        &opencode_stub_with_session_commands("", on_list, on_delete),
+        "",
+    );
+    std::fs::create_dir(home.path("sandbox")).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_proofd"))
+        .arg("--forget-opencode-sessions")
+        .arg(home.path("fake-opencode"))
+        .arg(home.path("sandbox"))
+        .arg("99999999999999")
+        .env("HOME", home.dir.path())
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn an_unrecognized_session_list_is_an_error_that_leaks_no_titles() {
+    let list = r#"printf '[{"id":"ses_1","directory":"/x","created":"SECRET TITLE"}]'"#;
+
+    let out = forget_sessions_with(list, "exit 0");
+
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("list opencode sessions"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains("SECRET TITLE"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_failed_session_delete_is_an_error_naming_the_session() {
+    let list = r#"printf '[{"id":"ses_stuck","directory":"%s","created":1}]' "$HOME/sandbox""#;
+
+    let out = forget_sessions_with(list, "echo 'database is locked' >&2; exit 3");
+
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("ses_stuck"), "stderr: {stderr}");
+    assert!(stderr.contains("database is locked"), "stderr: {stderr}");
+}
+
+#[test]
+fn session_cleanup_of_an_npm_installed_opencode_finds_the_node_beside_it() {
+    let home = FakeHome::with_config("");
+    let bin = home.path("npm/bin");
+    write_executable(bin.join("opencode"), CLI_NEEDING_NODE_BESIDE_IT);
+    write_executable(bin.join("node"), &node_stub_answering("[]"));
+    std::fs::create_dir(home.path("sandbox")).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_proofd"))
+        .arg("--forget-opencode-sessions")
+        .arg(bin.join("opencode"))
+        .arg(home.path("sandbox"))
+        .arg("99999999999999")
+        .env("HOME", home.dir.path())
+        .env("PATH", GUI_APP_PATH)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+}
+
+#[test]
+fn the_detached_session_cleanup_reports_its_failure_in_the_service_log() {
+    let home = FakeHome::with_cli_stub(
+        "opencode",
+        "opencode/some-model",
+        &opencode_stub_with_session_commands(
+            "cat >/dev/null\n  echo '{\"type\":\"text\",\"part\":{\"type\":\"text\",\"text\":\"Fixed.\"}}'",
+            "echo 'not json'",
+            "exit 0",
+        ),
+        "timeout_secs = 10",
+    );
+    let log = home.path(SERVICE_LOG);
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, "[earlier] Service invoked\n").unwrap();
+
+    let out = home.proofread("some text");
+
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+    assert!(
+        eventually(|| std::fs::read_to_string(&log)
+            .is_ok_and(|log| log.contains("list opencode sessions"))),
+        "service log: {:?}",
+        std::fs::read_to_string(&log)
+    );
+    assert!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .starts_with("[earlier] Service invoked\n")
+    );
 }
 
 fn send_signal(signal: &str, pid: &str) -> bool {
@@ -498,6 +607,56 @@ fn opencode_failure_reports_its_stderr() {
     );
 }
 
+const GUI_APP_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+
+fn write_executable(path: PathBuf, script: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn node_stub_answering(reply: &str) -> String {
+    format!("#!/bin/sh\ncat >/dev/null\necho '{reply}'\n")
+}
+
+const CLI_NEEDING_NODE_BESIDE_IT: &str = "#!/usr/bin/env node\n";
+
+#[test]
+fn a_cli_started_from_the_services_menu_finds_the_node_beside_it() {
+    let home = FakeHome::with_config("");
+    let bin = home.path("npm/bin");
+    write_executable(bin.join("claude"), CLI_NEEDING_NODE_BESIDE_IT);
+    write_executable(bin.join("node"), &node_stub_answering("Fixed."));
+    home.write_config(&format!(
+        "provider_bin = \"{}\"\ntimeout_secs = 10",
+        bin.join("claude").display()
+    ));
+
+    let out = home.proofread_with_env("fixd", &[("PATH", GUI_APP_PATH)]);
+
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "Fixed.");
+}
+
+#[test]
+fn a_cli_in_the_newest_nvm_node_is_found_without_provider_bin() {
+    let home = FakeHome::with_config("timeout_secs = 10");
+    for (version, reply) in [
+        ("v9.11.2", "Old."),
+        ("v25.2.1", "Fixed."),
+        ("v10.0.0", "Old."),
+    ] {
+        let bin = home.path(&format!(".config/nvm/versions/node/{version}/bin"));
+        write_executable(bin.join("claude"), CLI_NEEDING_NODE_BESIDE_IT);
+        write_executable(bin.join("node"), &node_stub_answering(reply));
+    }
+
+    let out = home.proofread_with_env("fixd", &[("PATH", GUI_APP_PATH)]);
+
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "Fixed.");
+}
+
 #[test]
 fn openai_compat_posts_chat_completion_without_credentials() {
     let (base_url, server) = serve_one_request(
@@ -528,6 +687,95 @@ fn openai_compat_posts_chat_completion_without_credentials() {
     assert_eq!(body["messages"][1]["role"], "user");
     let user = body["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("this are a sentense"), "user message: {user}");
+}
+
+#[test]
+fn openai_compat_ignores_proxy_settings_so_the_text_stays_on_this_mac() {
+    let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+    proxy.set_nonblocking(true).unwrap();
+    let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+    let (base_url, server) = serve_one_request(
+        "200 OK",
+        r#"{"choices":[{"message":{"role":"assistant","content":"This is a sentence."}}]}"#,
+    );
+    let home = FakeHome::with_openai_server(&base_url.replace("127.0.0.1", "localhost"));
+
+    let out = home.proofread_with_env(
+        "this are a sentense",
+        &[("HTTP_PROXY", &proxy_url), ("ALL_PROXY", &proxy_url)],
+    );
+
+    assert!(
+        proxy.accept().is_err(),
+        "the selection was sent to the proxy"
+    );
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+    server.join().unwrap();
+}
+
+fn chat_reply(content: &str, finish_reason: &str) -> String {
+    serde_json::json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": finish_reason,
+        }]
+    })
+    .to_string()
+}
+
+fn proofread_with_local_server_replying(input: &str, content: &str, finish_reason: &str) -> Output {
+    let (base_url, server) = serve_one_request("200 OK", &chat_reply(content, finish_reason));
+    let out = FakeHome::with_openai_server(&base_url).proofread(input);
+    server.join().unwrap();
+    out
+}
+
+#[test]
+fn a_reply_the_server_cut_off_is_a_failure_not_a_correction() {
+    let out =
+        proofread_with_local_server_replying("this are a sentense", "This is a sent", "length");
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "");
+    assert!(
+        text(&out.stderr).contains("reply was cut off"),
+        "stderr: {}",
+        text(&out.stderr)
+    );
+    assert_eq!(failure_pill_shown_for(&out), "Provider error");
+}
+
+#[test]
+fn a_leading_think_block_never_reaches_the_selection() {
+    let reply = "<think>\nThe user wrote two typos.\n</think>\n\nThis is a sentence.";
+
+    let out = proofread_with_local_server_replying("this is a sentense", reply, "stop");
+
+    assert!(out.status.success(), "stderr: {}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "This is a sentence.");
+}
+
+#[test]
+fn replies_that_are_not_a_revision_are_failures_with_nothing_printed() {
+    let cases = [
+        (
+            "some text",
+            "I'm sorry, but I can't help with that request.",
+        ),
+        ("helo", "Here is the corrected text:\n\nhello"),
+        (
+            "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.",
+            "The quick brown",
+        ),
+    ];
+
+    for (selection, reply) in cases {
+        let out = proofread_with_local_server_replying(selection, reply, "stop");
+
+        assert_eq!(out.status.code(), Some(1), "reply {reply:?}");
+        assert_eq!(text(&out.stdout), "", "reply {reply:?}");
+        assert_eq!(failure_pill_shown_for(&out), "Unexpected reply");
+    }
 }
 
 #[test]
@@ -680,6 +928,13 @@ fn every_proofd_error_gets_its_own_failure_pill() {
             FakeHome::with_claude_stub("cat >/dev/null\nprintf '```\\n \\n```'"),
             "some text",
             "Empty response",
+        ),
+        (
+            FakeHome::with_claude_stub(
+                "cat >/dev/null\necho \"I'm sorry, but I can't help with that request.\"",
+            ),
+            "some text",
+            "Unexpected reply",
         ),
     ];
 

@@ -11,6 +11,7 @@ static const NSTimeInterval kTerminateGrace = 0.5;
 static const NSTimeInterval kRunLoopSlice = 0.05;
 static NSString *const kGenericFailureReason = @"Proofread failed";
 static NSString *const kProofdErrorPrefix = @"proofd: ";
+static NSString *const kAttachmentPillReason = @"Contains an attachment";
 
 static NSTimeInterval servicesTimeoutFromInfoPlist(void) {
     NSArray *services = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSServices"];
@@ -44,6 +45,7 @@ static NSString *pillReasonForProofdError(NSString *proofdStderr) {
         @[@"input too large", @"Selection too long"],
         @[@"no text to proofread", @"No text selected"],
         @[@"provider returned empty output", @"Empty response"],
+        @[@"provider reply is not a revision", @"Unexpected reply"],
     ];
     for (NSArray<NSString *> *reason in reasons) {
         if ([message hasPrefix:reason[0]]) return reason[1];
@@ -265,6 +267,12 @@ static void writeRevision(NSPasteboard *pasteboard, NSString *revised, NSAttribu
     }
 
     CursorBusyIndicator *busyIndicator = [[CursorBusyIndicator alloc] init];
+    if (selection.containsAttachment) {
+        serviceLog(@"Selection contains an image or file; leaving it as is");
+        [busyIndicator finishWithFailure:kAttachmentPillReason];
+        if (error) *error = @"Selection contains an image or file, which proofreading would remove";
+        return;
+    }
     ProofreadFailure *failure = nil;
     NSString *revised = revisedByBundledProofd(selection.text, &failure);
     if (!revised) {

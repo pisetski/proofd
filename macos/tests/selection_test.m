@@ -40,6 +40,34 @@ static void expectSelection(NSString *plain, NSAttributedString *rich, NSString 
     }
 }
 
+static NSPasteboard *serviceCopyOfBoldTextWithAnInlineImage(void) {
+    NSTextView *view = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 300, 100)];
+    view.richText = YES;
+    view.importsGraphics = YES;
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:view.frame
+                                                   styleMask:NSWindowStyleMaskTitled
+                                                     backing:NSBackingStoreBuffered
+                                                       defer:NO];
+    window.contentView = view;
+    NSTextAttachment *image = [[NSTextAttachment alloc] init];
+    image.image = [NSImage imageWithSystemSymbolName:@"star" accessibilityDescription:nil];
+    NSMutableAttributedString *content = [uniformlyBold(@"Look ") mutableCopy];
+    [content appendAttributedString:[NSAttributedString attributedStringWithAttachment:image]];
+    [content appendAttributedString:[[NSAttributedString alloc] initWithString:@" here"]];
+    [view.textStorage setAttributedString:content];
+    [view selectAll:nil];
+
+    NSPasteboard *pasteboard = [NSPasteboard pasteboardWithUniqueName];
+    [view writeSelectionToPasteboard:pasteboard types:@[@"NSRTFPboardType", @"NSStringPboardType"]];
+    return pasteboard;
+}
+
+static Selection *selectionOn(NSPasteboard *pasteboard) {
+    NSData *rtf = [pasteboard dataForType:NSPasteboardTypeRTF];
+    NSAttributedString *rich = rtf ? [[NSAttributedString alloc] initWithRTF:rtf documentAttributes:nil] : nil;
+    return [Selection selectionWithPlainCopy:[pasteboard stringForType:NSPasteboardTypeString] richCopy:rich];
+}
+
 int main(void) {
     @autoreleasepool {
         expect([Selection selectionWithPlainCopy:nil richCopy:nil] == nil, @"no copies is no selection");
@@ -74,6 +102,13 @@ int main(void) {
 
         Selection *list = [Selection selectionWithPlainCopy:@"* One\n* Two" richCopy:boldExceptLastCharacter(@"\t•\tOne\n\t•\tTwo")];
         expect(list.bulletsLeftOut == 2, [NSString stringWithFormat:@"counted %lu bullets, expected 2", (unsigned long)list.bulletsLeftOut]);
+
+        Selection *withImage = selectionOn(serviceCopyOfBoldTextWithAnInlineImage());
+        expect(withImage != nil, @"the text view put its selection on the pasteboard");
+        expect(withImage.containsAttachment, @"a selection with an inline image is flagged");
+        expect(![Selection selectionWithPlainCopy:@"Test test" richCopy:nil].containsAttachment, @"plain text has no attachment");
+        expect(![Selection selectionWithPlainCopy:@"Test test" richCopy:boldExceptLastCharacter(@"Test test")].containsAttachment,
+               @"styled text has no attachment");
 
         if (failures == 0) printf("ok\n");
         return failures == 0 ? 0 : 1;

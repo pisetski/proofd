@@ -40,6 +40,7 @@ impl Provider for OpencodeCli {
 fn run_args(model: &str, sandbox: Option<&Path>) -> Vec<String> {
     let mut args: Vec<String> = [
         "run",
+        "--pure",
         "--agent",
         LOCKED_DOWN_AGENT,
         "--model",
@@ -117,6 +118,7 @@ mod tests {
                 .any(|pair| pair[0] == flag && pair[1] == value)
         };
         assert_eq!(args[0], "run");
+        assert!(args.contains(&"--pure".to_string()));
         assert!(has_pair("--agent", LOCKED_DOWN_AGENT));
         assert!(has_pair("--model", "opencode/m"));
         assert!(has_pair("--format", "json"));

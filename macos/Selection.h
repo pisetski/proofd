@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSString *text;
 @property (readonly, nullable) NSAttributedString *styledText;
 @property (readonly) NSUInteger bulletsLeftOut;
+@property (readonly) BOOL containsAttachment;
 
 + (nullable instancetype)selectionWithPlainCopy:(nullable NSString *)plain richCopy:(nullable NSAttributedString *)rich;
 

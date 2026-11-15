@@ -12,7 +12,9 @@ provider = "claude"
 # model = "haiku"
 
 # Path to the provider CLI. Needed only if it is outside PATH, Homebrew,
-# ~/.local/bin, ~/.cargo/bin, ~/.opencode/bin, or ~/.bun/bin.
+# ~/.local/bin, ~/.cargo/bin, ~/.opencode/bin, ~/.bun/bin, ~/.npm-global/bin,
+# ~/.volta/bin, ~/.local/share/mise/shims, ~/.asdf/shims, or the newest node
+# under ~/.nvm or ~/.config/nvm.
 # provider_bin = "~/bin/claude"
 
 # Required for openai-compat. No API key is sent, so use a local server
@@ -22,7 +24,7 @@ provider = "claude"
 # 1 to 600. From the Services menu the limit is about 30 seconds, because the
 # app you're typing in stops waiting for the result; higher values only apply
 # in the terminal.
-timeout_secs = 15
+timeout_secs = 25
 
 # Longer selections are refused.
 max_input_chars = 12000

@@ -2,8 +2,12 @@ use crate::config::Config;
 use crate::fence::strip_wrapping_fence;
 use crate::prompt::ProofreadPrompt;
 use crate::providers::{Provider, ProviderError};
+use crate::revision_check::looks_like_revision_of;
 use std::time::Duration;
 use thiserror::Error;
+
+const THINK_OPENING_TAG: &str = "<think>";
+const THINK_CLOSING_TAG: &str = "</think>";
 
 #[derive(Debug, Error)]
 pub enum ProofreadError {
@@ -13,6 +17,8 @@ pub enum ProofreadError {
     TooLarge(usize, usize),
     #[error("provider returned empty output")]
     EmptyOutput,
+    #[error("provider reply is not a revision of the selection")]
+    NotARevision,
     #[error("provider error: {0}")]
     Provider(#[from] ProviderError),
 }
@@ -35,9 +41,12 @@ pub async fn proofread_text<P: Provider>(
 
     let prompt = ProofreadPrompt::for_selection(selection);
     let reply = complete_within(config.timeout(), provider, &prompt).await?;
-    let revision = strip_wrapping_fence(&reply, selection);
+    let revision = strip_wrapping_fence(without_leading_think_block(&reply, selection), selection);
     if revision.is_empty() {
         return Err(ProofreadError::EmptyOutput);
+    }
+    if !looks_like_revision_of(selection, revision) {
+        return Err(ProofreadError::NotARevision);
     }
     Ok(with_whitespace_edges_of(selection, revision))
 }
@@ -50,6 +59,17 @@ async fn complete_within<P: Provider>(
     tokio::time::timeout(timeout, provider.complete(&prompt.system, &prompt.user))
         .await
         .unwrap_or(Err(ProviderError::Timeout(timeout)))
+}
+
+fn without_leading_think_block<'a>(reply: &'a str, selection: &str) -> &'a str {
+    let reply = reply.trim_start();
+    if selection.trim_start().starts_with(THINK_OPENING_TAG) {
+        return reply;
+    }
+    reply
+        .strip_prefix(THINK_OPENING_TAG)
+        .and_then(|inside| inside.split_once(THINK_CLOSING_TAG))
+        .map_or(reply, |(_, after_the_block)| after_the_block)
 }
 
 fn with_whitespace_edges_of(selection: &str, revision: &str) -> String {
@@ -164,6 +184,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn drops_a_leading_think_block_before_the_corrected_text() {
+        let revised = proofread_text(
+            "helo",
+            &test_config(),
+            &EchoProvider("<think>\nThe typo is in helo.\n</think>\n\nhello".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revised, "hello");
+    }
+
+    #[tokio::test]
+    async fn keeps_the_think_block_of_a_selection_that_starts_with_one() {
+        let selection = "<think>helo</think> there";
+        let revised = proofread_text(
+            selection,
+            &test_config(),
+            &EchoProvider("<think>hello</think> there".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revised, "<think>hello</think> there");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_not_pasted_over_the_selection() {
+        let refusal = "I'm sorry, but I can't help with that request.";
+        let err = proofread_text("some text", &test_config(), &EchoProvider(refusal.into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProofreadError::NotARevision), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_preface_before_a_short_selection_is_not_pasted() {
+        let reply = "Here is the corrected text:\nhello";
+        let err = proofread_text("helo", &test_config(), &EchoProvider(reply.into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProofreadError::NotARevision), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_reply_that_lost_most_of_the_selection_is_not_pasted() {
+        let selection = "The quick brown fox jumps over the lazy dog. ".repeat(2);
+        let config = Config {
+            max_input_chars: 1000,
+            ..test_config()
+        };
+        let err = proofread_text(&selection, &config, &EchoProvider("The quick brown".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProofreadError::NotARevision), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_fence_around_the_refusal_does_not_hide_it() {
+        let reply = "```\nI'm sorry, but I can't help with that request.\n```";
+        let err = proofread_text("some text", &test_config(), &EchoProvider(reply.into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProofreadError::NotARevision), "got: {err}");
+    }
+
+    #[tokio::test]
     async fn blank_input_never_reaches_provider() {
         let err = proofread_text(" \n", &test_config(), &FailProvider)
             .await
@@ -184,7 +269,8 @@ mod tests {
 
     #[tokio::test]
     async fn input_limit_counts_chars_not_bytes() {
-        proofread_text(&"é".repeat(100), &test_config(), &EchoProvider("ok".into()))
+        let selection = "é".repeat(100);
+        proofread_text(&selection, &test_config(), &EchoProvider(selection.clone()))
             .await
             .unwrap();
     }

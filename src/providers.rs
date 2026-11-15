@@ -54,7 +54,10 @@ impl AnyProvider {
             ProviderKind::OpenAICompat => Self::OpenAICompat(OpenAICompat {
                 model: cfg.model.clone(),
                 base_url: cfg.base_url.clone().unwrap_or_default(),
-                client: reqwest::Client::new(),
+                client: reqwest::Client::builder()
+                    .no_proxy()
+                    .build()
+                    .expect("an HTTP client without proxies"),
             }),
         }
     }

@@ -1,4 +1,5 @@
 use super::ProviderError;
+use super::cli_resolver::path_for_child;
 use std::io::ErrorKind;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,7 @@ pub(super) async fn run_cli(cli: CliInvocation<'_>) -> Result<String, ProviderEr
     let mut command = Command::new(cli.program);
     command
         .args(cli.args)
+        .env("PATH", path_for_child(cli.program))
         .envs(cli.env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

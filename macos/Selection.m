@@ -16,6 +16,11 @@ static const NSUInteger kMaxRichMarkerLength = 6;
     return self;
 }
 
+- (BOOL)containsAttachment {
+    NSString *attachmentCharacter = [NSString stringWithFormat:@"%C", (unichar)NSAttachmentCharacter];
+    return [_text containsString:attachmentCharacter];
+}
+
 static BOOL hasOneStyle(NSAttributedString *text) {
     if (text.length == 0) return YES;
     NSRange run;

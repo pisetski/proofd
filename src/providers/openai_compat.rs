@@ -50,6 +50,15 @@ impl Provider for OpenAICompat {
             total.elapsed().as_millis(),
             self.model,
         );
+        if value
+            .pointer("/choices/0/finish_reason")
+            .and_then(|r| r.as_str())
+            == Some("length")
+        {
+            return Err(ProviderError::Failed(
+                "openai-compat: the reply was cut off at the server's token limit".to_string(),
+            ));
+        }
         let content = value
             .pointer("/choices/0/message/content")
             .and_then(|c| c.as_str())

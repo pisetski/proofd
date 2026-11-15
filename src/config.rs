@@ -40,7 +40,7 @@ impl std::fmt::Display for ProviderKind {
 }
 
 const CONFIG_FILE: &str = "config.toml";
-const DEFAULT_TIMEOUT_SECS: u64 = 15;
+const DEFAULT_TIMEOUT_SECS: u64 = 25;
 const MAX_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_MAX_INPUT_CHARS: usize = 12_000;
 
@@ -183,7 +183,7 @@ mod tests {
         let missing = dir.path().join("config.toml");
         let cfg = load(Some(&missing)).unwrap();
         assert_eq!(cfg, Config::for_installed_clis(cli_installed));
-        assert_eq!(cfg.timeout_secs, 15);
+        assert_eq!(cfg.timeout_secs, 25);
     }
 
     #[test]
