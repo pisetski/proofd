@@ -1,6 +1,9 @@
 #import "BusyIndicator.h"
 
-static const CGFloat kIndicatorSize = 30;
+static const CGFloat kLegacyIndicatorSize = 30;
+static const CGFloat kGlassIndicatorSize = 34;
+static const NSInteger kGlassStyleRegular = 0;
+static const NSInteger kGlassStyleClear = 1;
 static const CGFloat kIndicatorCursorOffset = 14;
 static const CGFloat kPillPadding = 10;
 static const CGFloat kPillSymbolGap = 5;
@@ -13,6 +16,14 @@ static const NSTimeInterval kCrossfade = 0.12;
 static const NSTimeInterval kFadeOut = 0.25;
 static const NSTimeInterval kSuccessHold = 0.8;
 static const NSTimeInterval kFailureHold = 2.5;
+
+static BOOL glassAvailable(void) {
+    return NSClassFromString(@"NSGlassEffectView") != nil;
+}
+
+static CGFloat indicatorSize(void) {
+    return glassAvailable() ? kGlassIndicatorSize : kLegacyIndicatorSize;
+}
 
 static NSPoint clampedIntoScreenUnderCursor(NSPoint origin, NSSize size, NSPoint cursor) {
     for (NSScreen *screen in [NSScreen screens]) {
@@ -35,12 +46,12 @@ static NSPoint indicatorOriginNearCursor(NSSize size) {
 }
 
 static void centerInLeadingSquare(NSView *view) {
-    [view setFrameOrigin:NSMakePoint((kIndicatorSize - NSWidth(view.frame)) / 2,
-                                     (kIndicatorSize - NSHeight(view.frame)) / 2)];
+    [view setFrameOrigin:NSMakePoint((indicatorSize() - NSWidth(view.frame)) / 2,
+                                     (indicatorSize() - NSHeight(view.frame)) / 2)];
 }
 
 static NSPanel *makeIndicatorPanel(void) {
-    NSSize size = NSMakeSize(kIndicatorSize, kIndicatorSize);
+    NSSize size = NSMakeSize(indicatorSize(), indicatorSize());
     NSPanel *panel = [[NSPanel alloc] initWithContentRect:(NSRect){indicatorOriginNearCursor(size), size}
                                                 styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
                                                   backing:NSBackingStoreBuffered
@@ -67,6 +78,7 @@ static NSColor *appearanceColor(NSColor *light, NSColor *dark) {
 }
 
 @interface BadgeView : NSView
+@property (nonatomic) BOOL drawsOwnBackground;
 @end
 
 @implementation BadgeView
@@ -76,6 +88,7 @@ static NSColor *appearanceColor(NSColor *light, NSColor *dark) {
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
+    if (!self.drawsOwnBackground) return;
     NSRect shape = NSInsetRect(self.bounds, kBadgeRimWidth / 2, kBadgeRimWidth / 2);
     CGFloat radius = NSHeight(shape) / 2;
     NSBezierPath *capsule = [NSBezierPath bezierPathWithRoundedRect:shape xRadius:radius yRadius:radius];
@@ -87,6 +100,21 @@ static NSColor *appearanceColor(NSColor *light, NSColor *dark) {
 }
 
 @end
+
+static void setGlassStyle(NSView *glass, NSInteger style) {
+    [glass setValue:@(style) forKey:@"style"];
+}
+
+// Looked up by name so the host still builds with SDKs older than macOS 26.
+static NSView *makeGlassHosting(NSView *content) {
+    Class glassClass = NSClassFromString(@"NSGlassEffectView");
+    if (!glassClass) return nil;
+    NSView *glass = [[glassClass alloc] initWithFrame:content.frame];
+    [glass setValue:@(indicatorSize() / 2) forKey:@"cornerRadius"];
+    [glass setValue:content forKey:@"contentView"];
+    setGlassStyle(glass, kGlassStyleClear);
+    return glass;
+}
 
 static NSProgressIndicator *makeSpinner(void) {
     NSProgressIndicator *spinner = [[NSProgressIndicator alloc] init];
@@ -123,8 +151,8 @@ static NSSize layOutPill(NSImageView *symbol, NSTextField *label) {
     CGFloat labelTextInset = (NSWidth(label.frame) - ceil(label.attributedStringValue.size.width)) / 2;
     [symbol setFrameOrigin:NSMakePoint(kPillPadding, NSMinY(symbol.frame))];
     [label setFrameOrigin:NSMakePoint(NSMaxX(symbol.frame) + kPillSymbolGap - labelTextInset,
-                                      (kIndicatorSize - NSHeight(label.frame)) / 2)];
-    return NSMakeSize(NSMaxX(label.frame) - labelTextInset + kPillPadding, kIndicatorSize);
+                                      (indicatorSize() - NSHeight(label.frame)) / 2)];
+    return NSMakeSize(NSMaxX(label.frame) - labelTextInset + kPillPadding, indicatorSize());
 }
 
 static BOOL shouldAnimateMotion(void) {
@@ -133,6 +161,7 @@ static BOOL shouldAnimateMotion(void) {
 
 @implementation CursorBusyIndicator {
     NSPanel *_panel;
+    NSView *_glass;
     BadgeView *_badge;
     NSProgressIndicator *_spinner;
     NSTimer *_cursorPoll;
@@ -146,11 +175,13 @@ static __weak CursorBusyIndicator *visibleIndicator;
     [visibleIndicator close];
     visibleIndicator = self;
     _panel = makeIndicatorPanel();
-    _badge = [[BadgeView alloc] initWithFrame:NSMakeRect(0, 0, kIndicatorSize, kIndicatorSize)];
+    _badge = [[BadgeView alloc] initWithFrame:NSMakeRect(0, 0, indicatorSize(), indicatorSize())];
     _badge.wantsLayer = YES;
     _spinner = makeSpinner();
     [_badge addSubview:_spinner];
-    _panel.contentView = _badge;
+    _glass = makeGlassHosting(_badge);
+    _badge.drawsOwnBackground = _glass == nil;
+    _panel.contentView = _glass ?: _badge;
     [_spinner startAnimation:nil];
     [self redisplayAndRecomputeShadow];
     [self fadeIn];
@@ -193,7 +224,10 @@ static __weak CursorBusyIndicator *visibleIndicator;
 
 - (void)showOutcome:(NSImageView *)symbol reason:(nullable NSTextField *)reason holdFor:(NSTimeInterval)hold {
     if (_closed) return;
-    if (reason) [self growIntoPillHolding:symbol reason:reason];
+    if (reason) {
+        if (_glass) setGlassStyle(_glass, kGlassStyleRegular);
+        [self growIntoPillHolding:symbol reason:reason];
+    }
 
     NSArray<NSView *> *incoming = reason ? @[symbol, reason] : @[symbol];
     for (NSView *view in incoming) {
