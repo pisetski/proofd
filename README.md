@@ -54,6 +54,10 @@ Always select text first. With nothing selected, some apps, like Firefox,
 send the whole field. Apps without a Services menu, including many Electron
 apps, can't use proofd.
 
+Chromium-based apps, like Chrome, Edge, and Microsoft Teams, give a service
+only plain text and take only plain text back, so a formatted selection there
+comes back without its bold, italics, and links.
+
 ## Providers
 
 | Provider        | Your text goes to          | Time per sentence    |
